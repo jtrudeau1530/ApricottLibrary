@@ -26,9 +26,10 @@ Companion to [Apricot Radio](https://github.com/jtrudeau1530/ApricottRadio). Rad
 ## Quickstart (local)
 
 1. Copy `.env.example` to `.env` and adjust values.
-2. Create the media directory referenced by `MEDIA_PATH` if it doesn't exist.
+2. Create the directories referenced by `MEDIA_PATH` and `DOWNLOADS_PATH` if they don't exist.
 3. `docker compose up -d`
 4. Open Jellyfin at `http://localhost:8096`, complete first-run, point the music library at `/media`.
+5. Open slskd at `http://localhost:5030`, log in with `SLSKD_USERNAME` / `SLSKD_PASSWORD`, confirm it has connected to the Soulseek network.
 
 ## Deployment (Coolify)
 
@@ -38,15 +39,23 @@ Library deploys to Coolify as a **Docker Compose from Git** resource:
 2. Repo: `https://github.com/jtrudeau1530/ApricottLibrary` · Branch: `main`.
 3. Set env vars in Coolify's UI (do **not** commit `.env`):
    - `TZ`, `PUID`, `PGID` — host identity.
-   - `JELLYFIN_URL` — the public URL Coolify will serve Jellyfin from.
+   - `JELLYFIN_URL` — the public URL Coolify serves Jellyfin from (e.g. `https://jellyfin.zektek.us`).
    - `MEDIA_PATH` — **must be an absolute host path** (e.g. `/data/apricot/media`). A relative path like `./media` will lose data on redeploy because Coolify checks the repo out to a fresh directory each time. The Apricot Radio service must mount this same path.
-4. Coolify handles the reverse proxy + TLS. Authentik is wired in via forward-auth at the proxy layer (configured separately in Coolify, not in this compose file).
-5. Enable the GitHub webhook so pushes redeploy automatically.
+   - `DOWNLOADS_PATH` — **must be an absolute host path** (e.g. `/data/apricot/downloads`). Where slskd writes incoming Soulseek downloads. Kept separate from `MEDIA_PATH` so they can be curated before joining the library.
+   - `SLSKD_USERNAME`, `SLSKD_PASSWORD` — slskd web UI / REST API auth.
+   - `SOULSEEK_USERNAME`, `SOULSEEK_PASSWORD` — your Soulseek P2P account credentials.
+4. **Per-service domains in Coolify** — this stack exposes two web UIs, each needs its own domain:
+   - `jellyfin` service (port `8096`) → e.g. `jellyfin.zektek.us`.
+   - `slskd` service (port `5030`) → e.g. `slskd.zektek.us`.
+   Add the DNS A record before deploying so Let's Encrypt can issue the cert.
+5. **Soulseek peer port `50300/tcp`** — slskd downloads work without this exposed (passive mode), but exposing it on the host firewall improves discovery/upload performance. Optional.
+6. Coolify handles reverse proxy + TLS. Authentik is wired in via forward-auth at the proxy layer (configured separately in Coolify, not in this compose file).
+7. Enable the GitHub webhook so pushes redeploy automatically.
 
 ## Status
 
-Phase 1 (current): Jellyfin standalone.
-Phase 2: slskd added to compose.
-Phase 3: FastAPI download sidecar with request API.
-Phase 4: OnTheSpot integration (Spotify primary).
-Phase 5: yt-dlp edge cases + Authentik forward-auth.
+Phase 1 ✓ — Jellyfin standalone deployed.
+Phase 2 (current) — slskd added to compose for Soulseek downloads.
+Phase 3 — FastAPI download sidecar with request API.
+Phase 4 — OnTheSpot integration (Spotify primary).
+Phase 5 — yt-dlp edge cases + Authentik forward-auth.

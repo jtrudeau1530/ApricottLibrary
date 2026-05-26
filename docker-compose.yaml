@@ -19,6 +19,34 @@ services:
       timeout: 5s
       retries: 3
 
+  slskd:
+    image: slskd/slskd:latest
+    container_name: apricot-library-slskd
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-America/New_York}
+      # Web UI / REST API auth — required for any external access.
+      SLSKD_USERNAME: ${SLSKD_USERNAME:-admin}
+      SLSKD_PASSWORD: ${SLSKD_PASSWORD}
+      # Soulseek network credentials (account on slsknet.org).
+      SLSKD_SLSK_USERNAME: ${SOULSEEK_USERNAME}
+      SLSKD_SLSK_PASSWORD: ${SOULSEEK_PASSWORD}
+      # Permit editing slskd settings from the web UI.
+      SLSKD_REMOTE_CONFIGURATION: "true"
+    volumes:
+      - slskd-config:/app
+      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+    ports:
+      - "5030:5030"     # Web UI + REST API (route via Coolify domain)
+      - "50300:50300"   # Soulseek peer listen port (TCP)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5030/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   jellyfin-config:
   jellyfin-cache:
+  slskd-config:

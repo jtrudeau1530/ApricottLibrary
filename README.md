@@ -55,7 +55,19 @@ Library deploys to Coolify as a **Docker Compose from Git** resource:
 ## Status
 
 Phase 1 ✓ — Jellyfin standalone deployed.
-Phase 2 (current) — slskd added to compose for Soulseek downloads.
-Phase 3 — FastAPI download sidecar with request API.
-Phase 4 — OnTheSpot integration (Spotify primary).
-Phase 5 — yt-dlp edge cases + Authentik forward-auth.
+Phase 2 ✓ — slskd added to compose for Soulseek downloads.
+Phase 3 (current) — FastAPI sidecar scaffold with Spotify Web API `/search` endpoint; `/download` stub.
+Phase 4 — OnTheSpot integration (Spotify Premium primary downloader).
+Phase 5 — slskd + yt-dlp fallback wiring; Authentik forward-auth.
+
+## Sidecar (Phase 3)
+
+The sidecar lives in `./sidecar` and exposes a small HTTP API for the future custom Library frontend:
+
+| Method | Path | Status | Purpose |
+|---|---|---|---|
+| GET | `/health` | ✓ | Container healthcheck |
+| GET | `/search?q=...` | ✓ | Spotify Web API track search (metadata + cover art) |
+| POST | `/download/{track_id}` | stub (501) | Will trigger OnTheSpot download in Phase 4 |
+
+Search uses the Client Credentials flow (no user login needed), so you only need a Spotify Developer app's Client ID + Secret. Create the app at <https://developer.spotify.com/dashboard> and set `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` in Coolify env vars.

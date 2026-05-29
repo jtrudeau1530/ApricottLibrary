@@ -29,7 +29,7 @@ services:
       # Web UI / REST API auth — required for any external access.
       SLSKD_USERNAME: ${SLSKD_USERNAME:-admin}
       SLSKD_PASSWORD: ${SLSKD_PASSWORD}
-      # Soulseek network credentials (account on slsknet.org).
+      # Soulseek network credentials (first-connect registers the username).
       SLSKD_SLSK_USERNAME: ${SOULSEEK_USERNAME}
       SLSKD_SLSK_PASSWORD: ${SOULSEEK_PASSWORD}
       # Permit editing slskd settings from the web UI.
@@ -42,6 +42,30 @@ services:
       - "50300:50300"   # Soulseek peer listen port (TCP)
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5030/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  sidecar:
+    build: ./sidecar
+    container_name: apricot-library-sidecar
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-America/New_York}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      MEDIA_PATH: /media
+      DOWNLOADS_PATH: /downloads
+    volumes:
+      - ${MEDIA_PATH:-./media}:/media
+      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+    ports:
+      - "8000:8000"
+    depends_on:
+      - slskd
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

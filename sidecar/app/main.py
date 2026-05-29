@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException, Query
 
+from .auth import router as auth_router
 from .spotify import spotify
 
 app = FastAPI(title="Apricot Library Sidecar")
+app.include_router(auth_router)
 
 
 @app.get("/health")

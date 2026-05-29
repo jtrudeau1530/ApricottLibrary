@@ -55,9 +55,12 @@ services:
       TZ: ${TZ:-America/New_York}
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-https://api.library.zektek.us/auth/spotify/callback}
+      DATA_PATH: /data
       MEDIA_PATH: /media
       DOWNLOADS_PATH: /downloads
     volumes:
+      - sidecar-data:/data
       - ${MEDIA_PATH:-./media}:/media
       - ${DOWNLOADS_PATH:-./downloads}:/downloads
     expose:
@@ -74,3 +77,4 @@ volumes:
   jellyfin-config:
   jellyfin-cache:
   slskd-config:
+  sidecar-data:

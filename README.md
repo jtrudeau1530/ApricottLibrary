@@ -68,6 +68,9 @@ The sidecar lives in `./sidecar` and exposes a small HTTP API for the future cus
 |---|---|---|---|
 | GET | `/health` | ✓ | Container healthcheck |
 | GET | `/search?q=...` | ✓ | Spotify Web API track search (metadata + cover art) |
-| POST | `/download/{track_id}` | stub (501) | Will trigger OnTheSpot download in Phase 4 |
+| GET | `/auth/spotify/login` | ✓ | Start Spotify OAuth (Authorization Code flow, scope `streaming`) |
+| GET | `/auth/spotify/callback` | ✓ | OAuth callback — exchanges code for tokens, persists to `/data` |
+| GET | `/auth/spotify/status` | ✓ | Returns `{connected, scope, expires_at, expired}` |
+| POST | `/download/{track_id}` | stub (501) | Will stream via librespot using the connected account |
 
-Search uses the Client Credentials flow (no user login needed), so you only need a Spotify Developer app's Client ID + Secret. Create the app at <https://developer.spotify.com/dashboard> and set `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` in Coolify env vars.
+Search uses the Client Credentials flow (no user login needed). Downloads will use the Authorization Code flow against the user's Premium account — kick it off by visiting `/auth/spotify/login` in the browser. Tokens land in a persisted Docker volume (`sidecar-data`) and auto-refresh.

@@ -6,7 +6,9 @@ class Settings(BaseSettings):
 
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
+    spotify_redirect_uri: str = "https://api.library.zektek.us/auth/spotify/callback"
 
+    data_path: str = "/data"
     media_path: str = "/media"
     downloads_path: str = "/downloads"
 

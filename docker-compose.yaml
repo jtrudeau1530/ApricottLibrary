@@ -50,7 +50,6 @@ services:
     build: ./sidecar
     container_name: apricot-library-sidecar
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       TZ: ${TZ:-America/New_York}
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}

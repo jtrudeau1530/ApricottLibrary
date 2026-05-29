@@ -5,9 +5,10 @@ import urllib.parse
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from . import librespot_session
 from .config import settings
 
 router = APIRouter(prefix="/auth/spotify", tags=["auth"])
@@ -120,6 +121,24 @@ async def status() -> dict:
         "expires_at": tokens["expires_at"],
         "expired": tokens["expires_at"] < time.time(),
     }
+
+
+librespot_router = APIRouter(prefix="/auth/librespot", tags=["auth"])
+
+
+@librespot_router.get("/status")
+async def librespot_status() -> dict:
+    return {"connected": librespot_session.has_credentials()}
+
+
+@librespot_router.post("/credentials")
+async def librespot_credentials(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(400, f"Body must be JSON: {e}")
+    librespot_session.save_credentials(body)
+    return {"status": "saved"}
 
 
 async def get_user_access_token() -> str:

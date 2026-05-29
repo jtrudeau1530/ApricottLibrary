@@ -56,9 +56,10 @@ Library deploys to Coolify as a **Docker Compose from Git** resource:
 
 Phase 1 ✓ — Jellyfin standalone deployed.
 Phase 2 ✓ — slskd added to compose for Soulseek downloads.
-Phase 3 (current) — FastAPI sidecar scaffold with Spotify Web API `/search` endpoint; `/download` stub.
-Phase 4 — OnTheSpot integration (Spotify Premium primary downloader).
-Phase 5 — slskd + yt-dlp fallback wiring; Authentik forward-auth.
+Phase 3 ✓ — FastAPI sidecar with `/search` (Spotify Web API).
+Phase 4a ✓ — Spotify OAuth Web API flow (`/auth/spotify/*`).
+Phase 4b (current) — librespot wiring: `/auth/librespot/*` + working `/download/{track_id}` that streams 320kbps OGG to the Jellyfin media volume.
+Phase 5 — slskd + yt-dlp fallback wiring; tagging refinement; Authentik forward-auth.
 
 ## Sidecar (Phase 3)
 
@@ -71,6 +72,26 @@ The sidecar lives in `./sidecar` and exposes a small HTTP API for the future cus
 | GET | `/auth/spotify/login` | ✓ | Start Spotify OAuth (Authorization Code flow, scope `streaming`) |
 | GET | `/auth/spotify/callback` | ✓ | OAuth callback — exchanges code for tokens, persists to `/data` |
 | GET | `/auth/spotify/status` | ✓ | Returns `{connected, scope, expires_at, expired}` |
-| POST | `/download/{track_id}` | stub (501) | Will stream via librespot using the connected account |
+| GET | `/auth/librespot/status` | ✓ | Whether `librespot_credentials.json` is present in the sidecar volume |
+| POST | `/auth/librespot/credentials` | ✓ | Upload `credentials.json` produced by `tools/get_credentials.py` |
+| POST | `/download/{track_id}` | ✓ | Streams 320kbps OGG via librespot, writes to `MEDIA_PATH/Artist/Album/Track.ogg` |
+
+### One-time librespot setup
+
+librespot needs Spotify Premium credentials. We can't run its OAuth flow from inside the server container (the callback assumes browser-and-process on the same host), so we generate `credentials.json` locally and upload it once:
+
+```bash
+pip install librespot
+python3 tools/get_credentials.py
+# Open the printed URL, sign in, authorize. credentials.json written to CWD.
+
+curl -X POST https://api.library.zektek.us/auth/librespot/credentials \
+     -H "content-type: application/json" \
+     --data-binary @credentials.json
+```
+
+Verify: `curl https://api.library.zektek.us/auth/librespot/status` → `{"connected": true}`.
+
+After that, `POST /download/{track_id}` works for any Spotify track ID returned by `/search`.
 
 Search uses the Client Credentials flow (no user login needed). Downloads will use the Authorization Code flow against the user's Premium account — kick it off by visiting `/auth/spotify/login` in the browser. Tokens land in a persisted Docker volume (`sidecar-data`) and auto-refresh.

@@ -133,6 +133,94 @@
     pastePreview ? pastePreview.resolved_count - pastePreview.queued_count - pastePreview.library_count : 0
   );
 
+  // ---- YouTube playlist flow ----
+  type YoutubeResolvedTrack = {
+    video_id: string;
+    track_name: string;
+    artist_name: string;
+    album_name: string;
+    cover_url: string | null;
+    spotify_track_id: string | null;
+    youtube_title: string;
+    matched: boolean;
+    already_queued: boolean;
+    already_in_library: boolean;
+  };
+  let ytUrl = $state('');
+  let ytLoading = $state(false);
+  let ytError = $state<string | null>(null);
+  let ytPreview = $state<{
+    found: number;
+    matched: number;
+    queued_count: number;
+    library_count: number;
+    tracks: YoutubeResolvedTrack[];
+  } | null>(null);
+  let ytImporting = $state(false);
+  let ytResult = $state<{ enqueued: number; skipped_queued: number; skipped_library: number } | null>(null);
+
+  let ytWillEnqueue = $derived(
+    ytPreview ? ytPreview.tracks.filter((t) => !t.already_queued && !t.already_in_library).length : 0
+  );
+
+  async function previewYoutube() {
+    if (!ytUrl.trim()) return;
+    ytLoading = true;
+    ytError = null;
+    ytPreview = null;
+    ytResult = null;
+    try {
+      const res = await fetch('/api/youtube/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: ytUrl })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Failed (${res.status})`));
+      }
+      ytPreview = await res.json();
+    } catch (e) {
+      ytError = (e as Error).message;
+    } finally {
+      ytLoading = false;
+    }
+  }
+
+  async function importYoutube() {
+    if (!ytPreview || ytPreview.tracks.length === 0) return;
+    ytImporting = true;
+    ytError = null;
+    try {
+      const tracks = ytPreview.tracks
+        .filter((t) => !t.already_queued && !t.already_in_library)
+        .map((t) => ({
+          video_id: t.video_id,
+          track_name: t.track_name,
+          artist_name: t.artist_name,
+          album_name: t.album_name,
+          cover_url: t.cover_url,
+          spotify_track_id: t.spotify_track_id,
+          youtube_title: t.youtube_title,
+          matched: t.matched
+        }));
+      const res = await fetch('/api/youtube/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tracks })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Failed (${res.status})`));
+      }
+      ytResult = await res.json();
+    } catch (e) {
+      ytError = (e as Error).message;
+    } finally {
+      ytImporting = false;
+    }
+  }
+
   async function selectPlaylist(p: Playlist) {
     selected = p;
     preview = null;
@@ -281,6 +369,91 @@
             <div class="flex-1 min-w-0">
               <p class="truncate text-sm">{t.name}</p>
               <p class="truncate text-xs text-zinc-500">{t.artists.join(', ')}</p>
+            </div>
+            {#if t.already_in_library}
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">In library</span>
+            {:else if t.already_queued}
+              <span class="text-xs px-2 py-0.5 rounded bg-apricot-900 text-apricot-200">Queued</span>
+            {:else}
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-500">New</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
+  <!-- YouTube playlist flow — downloads via yt-dlp, no Spotify rate limit -->
+  <section class="rounded-2xl bg-zinc-900 p-5 mb-6">
+    <h2 class="font-semibold mb-1">Import a YouTube playlist</h2>
+    <p class="text-xs text-zinc-500 mb-3">
+      Paste a YouTube playlist URL. We download the audio from YouTube (no Spotify rate limit)
+      and pull clean metadata from Spotify search so Jellyfin treats them just like any other track.
+    </p>
+    <input
+      type="url"
+      bind:value={ytUrl}
+      placeholder="https://www.youtube.com/playlist?list=…"
+      class="w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm"
+    />
+    <div class="mt-3 flex items-center gap-3">
+      <button
+        type="button"
+        onclick={previewYoutube}
+        disabled={ytLoading || !ytUrl.trim()}
+        class="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-sm disabled:opacity-50"
+      >
+        {ytLoading ? 'Scanning…' : 'Preview'}
+      </button>
+      {#if ytPreview}
+        <span class="text-sm text-zinc-400">
+          Found {ytPreview.found} videos
+          <span class="mx-2 text-zinc-600">·</span>
+          <span class="text-apricot-400">{ytWillEnqueue} new</span>
+          <span class="mx-2 text-zinc-600">·</span>
+          {ytPreview.matched} matched on Spotify
+          <span class="mx-2 text-zinc-600">·</span>
+          {ytPreview.library_count} in library
+          <span class="mx-2 text-zinc-600">·</span>
+          {ytPreview.queued_count} already queued
+        </span>
+        <button
+          type="button"
+          onclick={importYoutube}
+          disabled={ytImporting || ytWillEnqueue === 0}
+          class="ml-auto rounded-lg bg-apricot-500 hover:bg-apricot-600 text-zinc-950 font-semibold px-4 py-2 disabled:opacity-50"
+        >
+          {ytImporting ? 'Importing…' : `Add ${ytWillEnqueue} to queue`}
+        </button>
+      {/if}
+    </div>
+
+    {#if ytError}
+      <p class="mt-3 text-sm text-red-400">{ytError}</p>
+    {/if}
+    {#if ytResult}
+      <div class="mt-3 rounded-lg border border-apricot-500/40 bg-apricot-900/20 px-4 py-3 text-sm">
+        <strong>Done.</strong>
+        Enqueued {ytResult.enqueued}, skipped {ytResult.skipped_library} in library,
+        skipped {ytResult.skipped_queued} already queued.
+      </div>
+    {/if}
+
+    {#if ytPreview && ytPreview.tracks.length > 0}
+      <ul class="mt-4 divide-y divide-zinc-800 rounded-lg bg-zinc-950 max-h-72 overflow-y-auto">
+        {#each ytPreview.tracks as t (t.video_id)}
+          <li class="px-4 py-2 flex items-center gap-3">
+            {#if t.cover_url}
+              <img src={t.cover_url} alt="" class="w-8 h-8 rounded" loading="lazy" />
+            {:else}
+              <div class="w-8 h-8 rounded bg-zinc-800"></div>
+            {/if}
+            <div class="flex-1 min-w-0">
+              <p class="truncate text-sm">{t.track_name}</p>
+              <p class="truncate text-xs text-zinc-500">
+                {t.artist_name}
+                {#if !t.matched}<span class="ml-1 text-zinc-600">· no Spotify match</span>{/if}
+              </p>
             </div>
             {#if t.already_in_library}
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">In library</span>

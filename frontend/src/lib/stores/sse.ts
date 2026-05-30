@@ -2,7 +2,9 @@ import { writable, derived, type Readable } from 'svelte/store';
 
 export type QueueItem = {
   id: string;
-  spotify_track_id: string;
+  source?: 'spotify' | 'youtube';
+  source_id?: string | null;
+  spotify_track_id: string | null;
   track_name: string;
   artist_name: string;
   album_name: string;

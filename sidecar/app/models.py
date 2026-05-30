@@ -56,7 +56,9 @@ class FetchQueue(Base):
     __tablename__ = "fetch_queue"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
-    spotify_track_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="spotify", index=True)
+    source_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    spotify_track_id: Mapped[str | None] = mapped_column(String(32), index=True)
     track_name: Mapped[str] = mapped_column(String(512), nullable=False)
     artist_name: Mapped[str] = mapped_column(String(512), nullable=False)
     album_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")

@@ -23,6 +23,7 @@ from .playlist_routes import router as playlist_router
 from .queue_routes import router as queue_router
 from .spotify_playlist_routes import paste_router as spotify_paste_router
 from .spotify_playlist_routes import router as spotify_playlist_router
+from .youtube_routes import router as youtube_router
 from .sessions import require_admin, require_session
 from .spotify import spotify
 from .sse_routes import router as sse_router
@@ -78,6 +79,7 @@ app.include_router(metadata_router)
 app.include_router(admin_router)
 app.include_router(spotify_playlist_router)
 app.include_router(spotify_paste_router)
+app.include_router(youtube_router)
 
 
 # Authenticated wrappers around the existing Spotify + librespot routers.

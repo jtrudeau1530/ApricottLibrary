@@ -23,7 +23,9 @@ class EnqueueRequest(BaseModel):
 
 class QueueRowOut(BaseModel):
     id: str
-    spotify_track_id: str
+    source: str
+    source_id: str | None
+    spotify_track_id: str | None
     track_name: str
     artist_name: str
     album_name: str
@@ -42,6 +44,8 @@ class QueueRowOut(BaseModel):
 async def _to_out(row: FetchQueue, requester_username: str | None) -> QueueRowOut:
     return QueueRowOut(
         id=row.id,
+        source=row.source or "spotify",
+        source_id=row.source_id,
         spotify_track_id=row.spotify_track_id,
         track_name=row.track_name,
         artist_name=row.artist_name,

@@ -8,7 +8,7 @@ import httpx
 from mutagen.oggvorbis import OggVorbis
 from sqlalchemy import select, update  # noqa: F401
 
-from . import jellyfin, librespot_session
+from . import jellyfin, librespot_session, youtube
 from .config import settings
 from .db import SessionLocal
 from .models import FetchQueue, SongMetadata
@@ -227,7 +227,15 @@ async def _download_one(row: FetchQueue) -> None:
 
     try:
         heartbeat_task = asyncio.create_task(_beat())
-        await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
+        source = (row.source or "spotify").lower()
+        if source == "youtube":
+            if not row.source_id:
+                raise RuntimeError("YouTube queue row missing source_id (video id)")
+            await asyncio.to_thread(youtube.download_audio, row.source_id, output_path)
+        else:
+            if not row.spotify_track_id:
+                raise RuntimeError("Spotify queue row missing spotify_track_id")
+            await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
         if heartbeat_task:
             heartbeat_task.cancel()
         # librespot output has no Vorbis comments — write title/artist/album so Jellyfin tags correctly.

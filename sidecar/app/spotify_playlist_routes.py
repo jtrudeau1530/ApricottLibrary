@@ -170,6 +170,18 @@ class PasteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=200_000)
 
 
+class ResolvedTrack(BaseModel):
+    id: str
+    name: str
+    artists: list[str] = Field(default_factory=list)
+    album: str | None = None
+    cover_url: str | None = None
+
+
+class EnqueueResolvedRequest(BaseModel):
+    tracks: list[ResolvedTrack] = Field(min_length=1, max_length=1000)
+
+
 async def _resolve_tracks(track_ids: list[str]) -> tuple[list[dict], list[str]]:
     """Resolve track metadata for each ID via Spotify. Returns (tracks, missing_ids)."""
     results: list[dict] = []
@@ -256,6 +268,97 @@ async def paste_preview(
         "queued_count": sum(1 for t in annotated if t["already_queued"]),
         "library_count": sum(1 for t in annotated if t["already_in_library"]),
         "tracks": annotated,
+    }
+
+
+@paste_router.post("/enqueue", status_code=status.HTTP_202_ACCEPTED)
+async def paste_enqueue_resolved(
+    body: EnqueueResolvedRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_session),
+) -> dict:
+    """Enqueue tracks already resolved by /preview. Skips Spotify entirely — avoids
+    rate-limiting when bulk-adding large lists."""
+    if not user.can_fetch:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have fetch permission")
+
+    track_ids = [t.id for t in body.tracks]
+    queued_set = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(FetchQueue.spotify_track_id).where(
+                    FetchQueue.spotify_track_id.in_(track_ids),
+                    FetchQueue.status.in_(["queued", "running"]),
+                )
+            )
+        ).all()
+    }
+    library_set = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(SongMetadata.spotify_track_id).where(
+                    SongMetadata.spotify_track_id.in_(track_ids)
+                )
+            ).all()
+        )
+        if r[0]
+    }
+
+    enqueued = 0
+    skipped_queued = 0
+    skipped_library = 0
+    new_rows: list[FetchQueue] = []
+    for t in body.tracks:
+        if t.id in library_set:
+            skipped_library += 1
+            continue
+        if t.id in queued_set:
+            skipped_queued += 1
+            continue
+        new_rows.append(
+            FetchQueue(
+                spotify_track_id=t.id,
+                track_name=t.name or "",
+                artist_name=(t.artists[0] if t.artists else "Unknown"),
+                album_name=t.album or "",
+                cover_url=t.cover_url,
+                requester_id=user.id,
+            )
+        )
+        queued_set.add(t.id)
+        enqueued += 1
+
+    if new_rows:
+        db.add_all(new_rows)
+        await db.commit()
+        for r in new_rows:
+            await publish(
+                "queue:added",
+                {
+                    "id": r.id,
+                    "spotify_track_id": r.spotify_track_id,
+                    "track_name": r.track_name,
+                    "artist_name": r.artist_name,
+                    "album_name": r.album_name,
+                    "cover_url": r.cover_url,
+                    "requester_id": r.requester_id,
+                    "requester_username": user.username,
+                    "status": r.status,
+                    "progress": 0,
+                    "error_message": None,
+                    "attempts": 0,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "started_at": None,
+                    "completed_at": None,
+                },
+            )
+
+    return {
+        "enqueued": enqueued,
+        "skipped_queued": skipped_queued,
+        "skipped_library": skipped_library,
     }
 
 

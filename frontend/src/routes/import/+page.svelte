@@ -90,19 +90,37 @@
   }
 
   async function importPaste() {
+    if (!pastePreview || pastePreview.tracks.length === 0) {
+      pasteError = 'Run Preview first.';
+      return;
+    }
     pasteImporting = true;
     pasteError = null;
     try {
-      const res = await fetch('/api/spotify/paste/import', {
+      // Send already-resolved tracks straight to the queue — no re-resolve,
+      // no Spotify rate-limit risk for large pastes.
+      const tracks = pastePreview.tracks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        artists: t.artists,
+        album: t.album,
+        cover_url: t.cover_url
+      }));
+      const res = await fetch('/api/spotify/paste/enqueue', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: pasteText })
+        body: JSON.stringify({ tracks })
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
         throw new Error(String(body.detail ?? `Failed (${res.status})`));
       }
-      pasteResult = await res.json();
+      const result = await res.json();
+      pasteResult = {
+        ...result,
+        missing_ids: pastePreview.missing_ids,
+        total_found: pastePreview.found_ids
+      };
     } catch (e) {
       pasteError = (e as Error).message;
     } finally {

@@ -1,10 +1,13 @@
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import youtube
+from .config import settings
 from .db import get_db
 from .models import User
 from .security import hash_password
@@ -129,3 +132,40 @@ async def delete_user(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     await db.delete(user)
     await db.commit()
+
+
+@router.get("/youtube/cookies")
+async def youtube_cookies_status(_admin: User = Depends(require_admin)) -> dict:
+    return {"present": youtube.has_cookies()}
+
+
+@router.post("/youtube/cookies", status_code=status.HTTP_204_NO_CONTENT)
+async def upload_youtube_cookies(
+    file: UploadFile = File(...),
+    _admin: User = Depends(require_admin),
+) -> None:
+    """Replace the yt-dlp cookies.txt on disk.
+
+    Expected format is the Netscape cookies.txt that browser extensions like
+    'Get cookies.txt LOCALLY' export — yt-dlp reads it natively and uses it
+    to satisfy YouTube's 'Sign in to confirm you're not a bot' challenge.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty file")
+    head = content[:200].decode("utf-8", errors="ignore").lstrip()
+    if not (head.startswith("# Netscape HTTP Cookie File") or head.startswith("# HTTP Cookie File")):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Not a Netscape cookies.txt — export with 'Get cookies.txt LOCALLY' or similar.",
+        )
+    target = Path(settings.data_path) / "youtube_cookies.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+
+@router.delete("/youtube/cookies", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_youtube_cookies(_admin: User = Depends(require_admin)) -> None:
+    target = Path(settings.data_path) / "youtube_cookies.txt"
+    if target.exists():
+        target.unlink()

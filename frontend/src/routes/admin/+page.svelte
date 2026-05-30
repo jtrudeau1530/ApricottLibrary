@@ -79,6 +79,39 @@
     });
     alert('Password updated; their existing sessions were invalidated.');
   }
+
+  // ---- YouTube cookies ----
+  let cookiesPresent = $state<boolean>(Boolean(data.youtube_cookies_present));
+  let uploadingCookies = $state(false);
+  let cookiesError = $state<string | null>(null);
+  let cookiesFile = $state<FileList | null>(null);
+
+  async function uploadCookies() {
+    if (!cookiesFile || cookiesFile.length === 0) return;
+    uploadingCookies = true;
+    cookiesError = null;
+    try {
+      const fd = new FormData();
+      fd.append('file', cookiesFile[0]);
+      const res = await fetch('/api/admin/youtube/cookies', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Upload failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Upload failed (${res.status})`));
+      }
+      cookiesPresent = true;
+      cookiesFile = null;
+    } catch (e) {
+      cookiesError = (e as Error).message;
+    } finally {
+      uploadingCookies = false;
+    }
+  }
+
+  async function clearCookies() {
+    if (!confirm('Remove the YouTube cookies? Downloads will likely fail for any video YouTube flags as bot traffic until you upload a new file.')) return;
+    const res = await fetch('/api/admin/youtube/cookies', { method: 'DELETE' });
+    if (res.ok) cookiesPresent = false;
+  }
 </script>
 
 <svelte:head>
@@ -134,6 +167,53 @@
         {creating ? 'Creating…' : 'Create user'}
       </button>
     </form>
+  </section>
+
+  <section class="rounded-2xl bg-zinc-900 p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">YouTube cookies</h2>
+      <span
+        class="text-xs px-2 py-0.5 rounded-full {cookiesPresent ? 'bg-apricot-900 text-apricot-200' : 'bg-zinc-800 text-zinc-400'}"
+      >
+        {cookiesPresent ? 'Active' : 'Not uploaded'}
+      </span>
+    </div>
+    <p class="text-xs text-zinc-500 leading-relaxed">
+      YouTube blocks unauthenticated downloads from headless servers
+      (<em>"Sign in to confirm you're not a bot"</em>). Install a browser extension like
+      <a class="text-apricot-400 hover:underline" href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" rel="noopener">Get cookies.txt LOCALLY</a>,
+      sign in to YouTube, export <code>cookies.txt</code>, and upload it here. yt-dlp will use it
+      for every video download. The file is stored on the sidecar volume at
+      <code>/data/youtube_cookies.txt</code>.
+    </p>
+    <div class="flex flex-wrap items-center gap-3">
+      <input
+        type="file"
+        accept=".txt,text/plain"
+        onchange={(e) => (cookiesFile = (e.currentTarget as HTMLInputElement).files)}
+        class="text-xs file:rounded file:bg-zinc-800 file:border-0 file:px-3 file:py-1.5 file:text-zinc-100 file:mr-3"
+      />
+      <button
+        type="button"
+        onclick={uploadCookies}
+        disabled={uploadingCookies || !cookiesFile || cookiesFile.length === 0}
+        class="text-sm rounded-lg bg-apricot-500 hover:bg-apricot-600 text-zinc-950 font-semibold px-3 py-1.5 disabled:opacity-50"
+      >
+        {uploadingCookies ? 'Uploading…' : 'Upload'}
+      </button>
+      {#if cookiesPresent}
+        <button
+          type="button"
+          onclick={clearCookies}
+          class="text-xs rounded bg-zinc-800 hover:bg-zinc-700 px-2 py-1"
+        >
+          Remove
+        </button>
+      {/if}
+    </div>
+    {#if cookiesError}
+      <p class="text-sm text-red-400">{cookiesError}</p>
+    {/if}
   </section>
 
   <section class="rounded-2xl bg-zinc-900">

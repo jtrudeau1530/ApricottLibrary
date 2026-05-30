@@ -11,7 +11,40 @@ import logging
 import re
 from pathlib import Path
 
+from .config import settings
+
 log = logging.getLogger("youtube")
+
+
+def _cookies_path() -> Path:
+    """Optional cookies.txt path. When present, every yt-dlp call uses it
+    so YouTube treats requests as an authenticated browser session — the
+    only reliable mitigation for the 'Sign in to confirm you're not a bot'
+    challenge on a headless server."""
+    return Path(settings.data_path) / "youtube_cookies.txt"
+
+
+def has_cookies() -> bool:
+    return _cookies_path().exists()
+
+
+def _yt_dlp_common_opts() -> dict:
+    """Options shared by every yt-dlp invocation in this module."""
+    opts: dict = {
+        "quiet": True,
+        "no_warnings": True,
+        # Lower-risk player clients for unauthenticated requests — the default
+        # 'web' client trips bot detection more often than these. Has no effect
+        # when cookies are configured.
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    if has_cookies():
+        opts["cookiefile"] = str(_cookies_path())
+    return opts
 
 # Common YouTube title decorations we strip before searching Spotify.
 _NOISE_PATTERNS = [
@@ -65,8 +98,7 @@ def enumerate_playlist(url: str) -> list[dict]:
     import yt_dlp
 
     opts = {
-        "quiet": True,
-        "no_warnings": True,
+        **_yt_dlp_common_opts(),
         "extract_flat": "in_playlist",
         "skip_download": True,
         "ignoreerrors": True,
@@ -115,8 +147,7 @@ def download_audio(video_id: str, output_path: Path) -> Path:
     out_template = str(output_path.with_suffix(""))
 
     opts = {
-        "quiet": True,
-        "no_warnings": True,
+        **_yt_dlp_common_opts(),
         "format": "bestaudio/best",
         "outtmpl": out_template + ".%(ext)s",
         "noplaylist": True,

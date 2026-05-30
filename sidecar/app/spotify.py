@@ -154,26 +154,28 @@ class SpotifyClient:
         return _to_playlist(resp.json())
 
     async def get_playlist_tracks(self, playlist_id: str) -> list[dict]:
-        """All tracks in a playlist, paginated transparently."""
+        """Tracks in a playlist.
+
+        Spotify's /playlists/{id}/tracks endpoint is restricted for apps in
+        Development Mode. The /playlists/{id} endpoint isn't, and it embeds
+        the first 100 tracks. Try the dedicated endpoint first; on 403,
+        fall back to reading tracks from the playlist object.
+        Playlists with more than 100 tracks will be truncated to the first
+        100 when the fallback path is taken.
+        """
         token = await self._bearer()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Path A — dedicated tracks endpoint with pagination (works for apps with extended quota).
         out: list[dict] = []
         url: str | None = PLAYLIST_TRACKS_URL.format(id=playlist_id)
         params: dict[str, str] | None = {"limit": "100", "market": "from_token"}
+        used_fallback = False
         while url:
-            resp = await self._client.get(
-                url,
-                params=params,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            resp = await self._client.get(url, params=params, headers=headers)
             if resp.status_code == 403:
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "Spotify refused this playlist's tracks (403). "
-                        "Spotify-curated playlists (Discover Weekly, Daily Mix, Release Radar, "
-                        "Made For You, etc.) cannot be imported via the API. Try a playlist you created."
-                    ),
-                )
+                used_fallback = True
+                break
             if resp.status_code != 200:
                 raise HTTPException(
                     status_code=502,
@@ -182,12 +184,39 @@ class SpotifyClient:
             body = resp.json()
             for entry in body.get("items", []):
                 tr = entry.get("track") or {}
-                # Skip local tracks and unavailable items.
                 if not tr or tr.get("is_local") or not tr.get("id"):
                     continue
                 out.append(_to_track(tr))
             url = body.get("next")
-            params = None  # next URL already includes them
+            params = None
+        if not used_fallback:
+            return out
+
+        # Path B — fall back to /playlists/{id} which embeds tracks.
+        log.info("Falling back to embedded-tracks read for playlist %s", playlist_id)
+        meta = await self._client.get(
+            PLAYLIST_URL.format(id=playlist_id),
+            params={
+                "fields": (
+                    "tracks(items(track(id,name,artists,album(name,images),"
+                    "duration_ms,explicit,external_ids,external_urls,is_local)))"
+                ),
+                "market": "from_token",
+            },
+            headers=headers,
+        )
+        if meta.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Spotify playlist embed read failed ({meta.status_code}): {meta.text[:200]}",
+            )
+        body = meta.json()
+        items = (body.get("tracks") or {}).get("items") or []
+        for entry in items:
+            tr = entry.get("track") or {}
+            if not tr or tr.get("is_local") or not tr.get("id"):
+                continue
+            out.append(_to_track(tr))
         return out
 
     async def get_track(self, track_id: str) -> dict | None:

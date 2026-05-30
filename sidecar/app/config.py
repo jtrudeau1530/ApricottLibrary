@@ -26,5 +26,9 @@ class Settings(BaseSettings):
 
     public_app_url: str = "https://library.zektek.us"
 
+    # bgutil-pot-provider service URL — yt-dlp's plugin calls it to mint
+    # PO Tokens for YouTube's SABR streaming path.
+    bgutil_pot_url: str = "http://bgutil-pot:4416"
+
 
 settings = Settings()

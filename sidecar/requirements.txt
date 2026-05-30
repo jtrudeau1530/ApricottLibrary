@@ -12,4 +12,5 @@ sse-starlette==2.1.3
 mutagen==1.47.0
 itsdangerous==2.2.0
 yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master
+bgutil-ytdlp-pot-provider
 python-multipart==0.0.20

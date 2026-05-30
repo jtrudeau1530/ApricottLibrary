@@ -31,17 +31,19 @@ def has_cookies() -> bool:
 def _yt_dlp_common_opts() -> dict:
     """Options shared by every yt-dlp invocation in this module.
 
-    Player clients: ``tv_simply`` bypasses YouTube's SABR streaming path that
-    requires a PO Token (which our headless server can't easily mint).
-    ``web_safari`` is a fallback for the videos tv_simply can't reach.
-    Without this override yt-dlp's default cascade was returning zero formats
-    for bot-challenged videos even with cookies present.
+    YouTube's SABR streaming requires a PO Token to hand out playable format
+    URLs — without one, every player_client returns zero formats. We rely on
+    the bgutil-pot-provider service (a sibling container) plus the
+    bgutil-ytdlp-pot-provider plugin to mint tokens on demand; the plugin is
+    discovered automatically once installed, we only need to pass its base
+    URL so it talks to the right container.
     """
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "extractor_args": {
-            "youtube": {"player_client": ["tv_simply", "web_safari", "mweb"]},
+            "youtube": {"player_client": ["default", "tv_simply", "web_safari"]},
+            "youtubepot-bgutilhttp": {"base_url": [settings.bgutil_pot_url]},
         },
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

@@ -29,14 +29,18 @@ def has_cookies() -> bool:
 
 
 def _yt_dlp_common_opts() -> dict:
-    """Options shared by every yt-dlp invocation in this module."""
+    """Options shared by every yt-dlp invocation in this module.
+
+    Player clients: 'tv' + 'web' is the current yt-dlp wiki recommendation —
+    'tv' is what works on most age-restricted / bot-challenged videos, 'web'
+    is the fallback that gives the broadest set of audio-only formats. We
+    deliberately leave 'android' off: it returns format ids that frequently
+    aren't actually downloadable (causing 'Requested format is not available').
+    """
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
-        # Lower-risk player clients for unauthenticated requests — the default
-        # 'web' client trips bot detection more often than these. Has no effect
-        # when cookies are configured.
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -146,9 +150,12 @@ def download_audio(video_id: str, output_path: Path) -> Path:
     # postprocessor.
     out_template = str(output_path.with_suffix(""))
 
+    # Format selector: prefer audio-only, accept any video as fallback. The
+    # FFmpegExtractAudio postprocessor strips audio out of whichever container
+    # we end up with.
     opts = {
         **_yt_dlp_common_opts(),
-        "format": "bestaudio/best",
+        "format": "bestaudio[acodec!=none]/bestaudio*/best",
         "outtmpl": out_template + ".%(ext)s",
         "noplaylist": True,
         "postprocessors": [

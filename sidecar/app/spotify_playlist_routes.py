@@ -185,50 +185,52 @@ class EnqueueResolvedRequest(BaseModel):
 async def _resolve_tracks(
     track_ids: list[str],
 ) -> tuple[list[dict], list[str], dict[str, int]]:
-    """Resolve track metadata for each ID via Spotify's batch /v1/tracks endpoint.
+    """Resolve track metadata for each ID via Spotify's singular /v1/tracks/{id}.
 
-    Returns (tracks, missing_ids, error_counts). error_counts maps the
-    upstream Spotify status (or a short label like ``"exception"``) to how
-    many IDs hit it — including 200 for successful chunks so the UI can show
-    progress.
+    Spotify's batch /v1/tracks?ids=... endpoint is gated behind Extended Quota
+    (returns 403 for Development-mode apps), but the singular endpoint is still
+    open. We trade RPS for actually getting data.
+
+    Returns (tracks, missing_ids, error_counts). error_counts maps the upstream
+    Spotify status (or a short label like ``"exception"``) to how many ids hit
+    it, so the UI can tell rate-limit (429) apart from quota (403) apart from
+    genuinely-unknown (404).
     """
-    by_id: dict[str, dict] = {}
+    results: list[dict] = []
     missing: list[str] = []
     error_counts: dict[str, int] = {}
 
-    chunks: list[list[str]] = [track_ids[i : i + 50] for i in range(0, len(track_ids), 50)]
-    for chunk in chunks:
+    def _bump(label: str) -> None:
+        error_counts[label] = error_counts.get(label, 0) + 1
+
+    async def _one(tid: str) -> None:
         try:
-            chunk_map, status_code, body = await spotify.get_tracks_batch(chunk)
-        except Exception as exc:  # pragma: no cover
-            log.warning("Batch tracks lookup raised: %s", exc)
-            for tid in chunk:
+            tr = await spotify.get_track(tid)
+            if tr is None:
                 missing.append(tid)
-                error_counts["exception"] = error_counts.get("exception", 0) + 1
-            continue
-
-        if status_code != 200:
-            log.warning("Spotify batch returned %s: %s", status_code, body)
-            for tid in chunk:
-                missing.append(tid)
-                key = str(status_code)
-                error_counts[key] = error_counts.get(key, 0) + 1
-            continue
-
-        for tid in chunk:
-            if tid in chunk_map:
-                by_id[tid] = chunk_map[tid]
+                _bump("404")
             else:
-                # Spotify returned a non-null response but this id was absent —
-                # track removed, region-blocked, or never existed.
-                missing.append(tid)
-                error_counts["404"] = error_counts.get("404", 0) + 1
+                results.append(tr)
+        except HTTPException as exc:
+            log.warning("Failed to resolve %s: %s %s", tid, exc.status_code, exc.detail)
+            missing.append(tid)
+            _bump(str(exc.status_code))
+        except Exception as exc:  # pragma: no cover
+            log.warning("Failed to resolve %s: %s", tid, exc)
+            missing.append(tid)
+            _bump("exception")
 
-        # Brief pause between chunks to be gentle on the bucket.
-        if len(chunks) > 1:
-            await asyncio.sleep(0.5)
+    # Concurrency=2 + per-call spacing keeps us well under Spotify's burst limit.
+    sem = asyncio.Semaphore(2)
 
-    ordered = [by_id[tid] for tid in track_ids if tid in by_id]
+    async def _bound(tid: str) -> None:
+        async with sem:
+            await _one(tid)
+            await asyncio.sleep(0.15)
+
+    await asyncio.gather(*(_bound(t) for t in track_ids))
+    by_id = {t["id"]: t for t in results}
+    ordered = [by_id[t] for t in track_ids if t in by_id]
     return ordered, missing, error_counts
 
 

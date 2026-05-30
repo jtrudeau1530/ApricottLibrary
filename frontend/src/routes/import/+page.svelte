@@ -230,8 +230,12 @@
             <span class="mx-2 text-zinc-600">·</span>
             <span class="text-red-400">
               {pastePreview.missing_ids.length} unresolved
-              {#if pastePreview.error_counts?.['429']}
+              {#if pastePreview.error_counts?.['403']}
+                (Spotify denied {pastePreview.error_counts['403']} — your app is in Development Mode without Extended Quota)
+              {:else if pastePreview.error_counts?.['429']}
                 (Spotify rate-limited {pastePreview.error_counts['429']} — wait a minute, then Preview again)
+              {:else if pastePreview.error_counts?.['401']}
+                (Spotify token rejected — reconnect at /api/auth/spotify/login)
               {:else if pastePreview.error_counts && Object.keys(pastePreview.error_counts).length > 0}
                 ({Object.entries(pastePreview.error_counts)
                   .map(([k, v]) => `${v}×${k}`)

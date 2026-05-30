@@ -23,6 +23,62 @@ log = logging.getLogger("youtube_routes")
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
 
 
+@router.get("/debug/formats/{video_id}")
+async def debug_formats(
+    video_id: str,
+    _user: User = Depends(require_session),
+) -> dict:
+    """Return the raw format list yt-dlp sees for one video.
+
+    'Requested format is not available' means our selector matched none of
+    the formats the chosen player_client returned — this lets us inspect
+    exactly what's on offer so we can adjust the selector or the client.
+    """
+    info: dict | None = None
+    error_message: str | None = None
+    try:
+        info = await asyncio.to_thread(_raw_formats, video_id)
+    except Exception as exc:
+        error_message = repr(exc)
+    formats = (info or {}).get("formats") or []
+    audio_only = [
+        f for f in formats if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+    ]
+    return {
+        "error": error_message,
+        "title": (info or {}).get("title"),
+        "uploader": (info or {}).get("uploader"),
+        "format_count": len(formats),
+        "audio_only_count": len(audio_only),
+        "formats": [
+            {
+                "id": f.get("format_id"),
+                "ext": f.get("ext"),
+                "acodec": f.get("acodec"),
+                "vcodec": f.get("vcodec"),
+                "abr": f.get("abr"),
+                "tbr": f.get("tbr"),
+                "filesize": f.get("filesize") or f.get("filesize_approx"),
+                "protocol": f.get("protocol"),
+                "format_note": f.get("format_note"),
+            }
+            for f in formats[:40]
+        ],
+    }
+
+
+def _raw_formats(video_id: str) -> dict | None:
+    import yt_dlp
+
+    opts = {
+        **youtube._yt_dlp_common_opts(),
+        "skip_download": True,
+        "ignoreerrors": False,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+
+
 @router.get("/debug")
 async def debug_enumerate(
     url: str,

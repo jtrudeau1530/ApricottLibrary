@@ -14,6 +14,7 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 SEARCH_URL = "https://api.spotify.com/v1/search"
 TRACK_URL = "https://api.spotify.com/v1/tracks/{id}"
 TRACKS_BATCH_URL = "https://api.spotify.com/v1/tracks"
+EMBED_URL = "https://open.spotify.com/embed/track/{id}"
 ME_PLAYLISTS_URL = "https://api.spotify.com/v1/me/playlists"
 PLAYLIST_URL = "https://api.spotify.com/v1/playlists/{id}"
 PLAYLIST_TRACKS_URL = "https://api.spotify.com/v1/playlists/{id}/tracks"
@@ -228,6 +229,112 @@ class SpotifyClient:
                 ),
             )
         return out
+
+    async def get_track_via_embed(self, track_id: str) -> dict | None:
+        """Pull track metadata from open.spotify.com/embed/track/{id}.
+
+        The embed page is a public CDN-served HTML page. It has no app-level
+        rate limit and no OAuth scope requirement — great fallback for the
+        paste-import flow when /v1/tracks/{id} is throttled or quota-gated.
+
+        The page exposes structured data via og: meta tags and a JSON blob:
+          <meta property="og:title" content="Track Name">
+          <meta property="og:description" content="Artist · Song · 1964">
+          <meta property="og:image" content="https://i.scdn.co/image/...">
+        and embeds a JSON __NEXT_DATA__ blob with the full track payload.
+        We prefer the JSON blob when present; fall back to og: tags otherwise.
+        """
+        url = EMBED_URL.format(id=track_id)
+        resp = await self._client.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 ApricotLibrary/1.0",
+                "Accept": "text/html",
+            },
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            log.warning("Embed fetch %s -> %s", track_id, resp.status_code)
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"Spotify embed {track_id} returned {resp.status_code}",
+            )
+        html = resp.text
+
+        # Try the JSON blob first — richer data, less fragile than og: tags.
+        import json
+        import re as _re
+        m = _re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html, _re.DOTALL,
+        )
+        if m:
+            try:
+                blob = json.loads(m.group(1))
+                entity = (
+                    blob.get("props", {})
+                    .get("pageProps", {})
+                    .get("state", {})
+                    .get("data", {})
+                    .get("entity")
+                )
+                if entity and entity.get("type") in ("track", None):
+                    artists = [
+                        a.get("name") for a in (entity.get("artists") or []) if a.get("name")
+                    ]
+                    visual = entity.get("visualIdentity") or {}
+                    images = visual.get("image") or []
+                    cover = None
+                    if images:
+                        largest = max(
+                            images,
+                            key=lambda i: (i.get("maxWidth") or 0) * (i.get("maxHeight") or 0),
+                        )
+                        cover = largest.get("url")
+                    return {
+                        "id": track_id,
+                        "name": entity.get("title") or entity.get("name") or "",
+                        "artists": artists,
+                        "album": entity.get("subtitle") or "",
+                        "duration_ms": entity.get("duration"),
+                        "explicit": entity.get("isExplicit", False),
+                        "isrc": None,
+                        "cover_url": cover,
+                        "spotify_url": f"https://open.spotify.com/track/{track_id}",
+                    }
+            except Exception as exc:  # pragma: no cover
+                log.debug("Embed JSON parse failed for %s: %s", track_id, exc)
+
+        # Fallback to og: tags.
+        def _og(prop: str) -> str | None:
+            mm = _re.search(
+                rf'<meta\s+property="og:{prop}"\s+content="([^"]*)"',
+                html,
+            )
+            return mm.group(1) if mm else None
+
+        title = _og("title") or ""
+        desc = _og("description") or ""
+        image = _og("image")
+        # og:description is typically "Artist · Song · Year" — take the part
+        # before the first separator.
+        artist = ""
+        if "·" in desc:
+            artist = desc.split("·")[0].strip()
+        if not title:
+            return None
+        return {
+            "id": track_id,
+            "name": title,
+            "artists": [artist] if artist else [],
+            "album": "",
+            "duration_ms": None,
+            "explicit": False,
+            "isrc": None,
+            "cover_url": image,
+            "spotify_url": f"https://open.spotify.com/track/{track_id}",
+        }
 
     async def get_tracks_batch(self, track_ids: list[str]) -> tuple[dict[str, dict], int | None, str]:
         """Look up up to 50 tracks in a single Spotify call.

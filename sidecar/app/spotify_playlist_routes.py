@@ -204,6 +204,21 @@ async def _resolve_tracks(
         error_counts[label] = error_counts.get(label, 0) + 1
 
     async def _one(tid: str) -> None:
+        # Primary path: the public embed page. It has no app-level rate limit
+        # and no Extended-Quota requirement, so the paste flow is independent
+        # of the heavily-throttled /v1/tracks bucket.
+        try:
+            tr = await spotify.get_track_via_embed(tid)
+            if tr is not None and tr.get("name"):
+                results.append(tr)
+                return
+            # Embed returned no parseable content — try the API as a fallback.
+        except HTTPException as exc:
+            log.warning("Embed failed for %s: %s %s", tid, exc.status_code, exc.detail)
+        except Exception as exc:  # pragma: no cover
+            log.warning("Embed exception for %s: %s", tid, exc)
+
+        # Fallback: authenticated Web API (may 429 / 403 depending on quota).
         try:
             tr = await spotify.get_track(tid)
             if tr is None:
@@ -212,21 +227,20 @@ async def _resolve_tracks(
             else:
                 results.append(tr)
         except HTTPException as exc:
-            log.warning("Failed to resolve %s: %s %s", tid, exc.status_code, exc.detail)
+            log.warning("API fallback failed %s: %s %s", tid, exc.status_code, exc.detail)
             missing.append(tid)
             _bump(str(exc.status_code))
         except Exception as exc:  # pragma: no cover
-            log.warning("Failed to resolve %s: %s", tid, exc)
+            log.warning("API fallback exception %s: %s", tid, exc)
             missing.append(tid)
             _bump("exception")
 
-    # Concurrency=2 + per-call spacing keeps us well under Spotify's burst limit.
-    sem = asyncio.Semaphore(2)
+    # Embed CDN tolerates higher concurrency than the Web API.
+    sem = asyncio.Semaphore(6)
 
     async def _bound(tid: str) -> None:
         async with sem:
             await _one(tid)
-            await asyncio.sleep(0.15)
 
     await asyncio.gather(*(_bound(t) for t in track_ids))
     by_id = {t["id"]: t for t in results}

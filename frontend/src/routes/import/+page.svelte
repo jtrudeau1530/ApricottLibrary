@@ -388,7 +388,10 @@
       type="url"
       bind:value={ytUrl}
       placeholder="https://www.youtube.com/playlist?list=…"
-      class="w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm"
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+      class="w-full rounded-lg bg-zinc-800 px-3 py-2 text-xs font-mono"
     />
     <div class="mt-3 flex items-center gap-3">
       <button

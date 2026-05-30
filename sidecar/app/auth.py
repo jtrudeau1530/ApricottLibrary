@@ -60,7 +60,8 @@ async def login() -> RedirectResponse:
         "redirect_uri": settings.spotify_redirect_uri,
         "scope": SCOPES,
         "state": state,
-        "show_dialog": "false",
+        # Always show the consent dialog so widened scopes are re-granted.
+        "show_dialog": "true",
     }
     return RedirectResponse(f"{AUTH_URL}?{urllib.parse.urlencode(params)}")
 

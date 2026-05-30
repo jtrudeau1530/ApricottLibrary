@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-apricot-50: #fff7ed;
+  --color-apricot-100: #ffedd5;
+  --color-apricot-200: #fed7aa;
+  --color-apricot-300: #fdba74;
+  --color-apricot-400: #fb923c;
+  --color-apricot-500: #f97316;
+  --color-apricot-600: #ea580c;
+  --color-apricot-700: #c2410c;
+  --color-apricot-800: #9a3412;
+  --color-apricot-900: #7c2d12;
+}
+
+html, body {
+  height: 100%;
+}

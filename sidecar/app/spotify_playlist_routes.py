@@ -23,6 +23,60 @@ async def list_my_playlists(
     return await spotify.list_user_playlists(limit=limit, offset=offset)
 
 
+@router.get("/debug/{playlist_id}")
+async def debug_playlist(
+    playlist_id: str,
+    _user: User = Depends(require_session),
+) -> dict:
+    """Try several variations of the tracks call so we can see which Spotify rejects."""
+    import httpx as _httpx
+    from .auth import get_user_access_token
+
+    token = await get_user_access_token()
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    out: dict = {}
+    async with _httpx.AsyncClient(timeout=10.0) as client:
+        # 1) Playlist metadata
+        meta = await client.get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}", headers=headers
+        )
+        out["meta"] = {
+            "status": meta.status_code,
+            "body": meta.text[:400],
+            "owner": (meta.json().get("owner") if meta.status_code == 200 else None),
+        }
+        # 2) Tracks with market=from_token (what we currently use)
+        t1 = await client.get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+            params={"limit": "10", "market": "from_token"},
+            headers=headers,
+        )
+        out["tracks_with_market_from_token"] = {"status": t1.status_code, "body": t1.text[:400]}
+        # 3) Tracks with explicit market=US
+        t2 = await client.get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+            params={"limit": "10", "market": "US"},
+            headers=headers,
+        )
+        out["tracks_with_market_US"] = {"status": t2.status_code, "body": t2.text[:400]}
+        # 4) Tracks with no market
+        t3 = await client.get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+            params={"limit": "10"},
+            headers=headers,
+        )
+        out["tracks_no_market"] = {"status": t3.status_code, "body": t3.text[:400]}
+        # 5) Tracks with minimal fields requested
+        t4 = await client.get(
+            f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+            params={"limit": "10", "fields": "items(track(id,name))"},
+            headers=headers,
+        )
+        out["tracks_with_fields"] = {"status": t4.status_code, "body": t4.text[:400]}
+    out["token_prefix"] = token[:12] + "…"
+    return out
+
+
 @router.get("/{playlist_id}/tracks")
 async def list_playlist_tracks(
     playlist_id: str,

@@ -129,56 +129,56 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 1 | Pending |
-| AUTH-02 | Phase 1 | Pending |
-| AUTH-03 | Phase 1 | Pending |
-| AUTH-04 | Phase 1 | Pending |
-| AUTH-05 | Phase 1 | Pending |
-| AUTH-06 | Phase 1 | Pending |
-| ADMIN-01 | Phase 1 | Pending |
-| QUEUE-01 | Phase 2 | Pending |
-| QUEUE-02 | Phase 2 | Pending |
-| QUEUE-03 | Phase 2 | Pending |
-| QUEUE-04 | Phase 2 | Pending |
-| QUEUE-05 | Phase 2 | Pending |
-| QUEUE-06 | Phase 2 | Pending |
-| QUEUE-07 | Phase 2 | Pending |
-| QUEUE-08 | Phase 2 | Pending |
-| RT-01 | Phase 2 | Pending |
-| RT-02 | Phase 2 | Pending |
-| RT-03 | Phase 2 | Pending |
-| RT-04 | Phase 2 | Pending |
-| RT-05 | Phase 2 | Pending |
-| CAT-01 | Phase 3 | Pending |
-| CAT-02 | Phase 3 | Pending |
-| CAT-03 | Phase 3 | Pending |
-| CAT-04 | Phase 3 | Pending |
-| CAT-05 | Phase 3 | Pending |
-| STOR-01 | Phase 3 | Pending |
-| STOR-02 | Phase 3 | Pending |
-| SRCH-01 | Phase 4 | Pending |
-| SRCH-02 | Phase 4 | Pending |
-| SRCH-03 | Phase 4 | Pending |
-| SRCH-04 | Phase 4 | Pending |
-| SRCH-05 | Phase 4 | Pending |
-| SONG-01 | Phase 5 | Pending |
-| SONG-02 | Phase 5 | Pending |
-| SONG-03 | Phase 5 | Pending |
-| SONG-04 | Phase 5 | Pending |
-| META-01 | Phase 5 | Pending |
-| META-02 | Phase 5 | Pending |
-| META-03 | Phase 5 | Pending |
-| META-04 | Phase 5 | Pending |
-| PLST-01 | Phase 6 | Pending |
-| PLST-02 | Phase 6 | Pending |
-| PLST-03 | Phase 6 | Pending |
-| PLST-04 | Phase 6 | Pending |
-| PLST-05 | Phase 6 | Pending |
-| ADMIN-02 | Phase 6 | Pending |
-| ADMIN-03 | Phase 6 | Pending |
-| ADMIN-04 | Phase 6 | Pending |
-| ADMIN-05 | Phase 6 | Pending |
-| ADMIN-06 | Phase 6 | Pending |
+| AUTH-01 | Phase 1 | Built (verify on deploy) |
+| AUTH-02 | Phase 1 | Built (verify on deploy) |
+| AUTH-03 | Phase 1 | Built (verify on deploy) |
+| AUTH-04 | Phase 1 | Built (verify on deploy) |
+| AUTH-05 | Phase 1 | Built (verify on deploy) |
+| AUTH-06 | Phase 1 | Built (verify on deploy) |
+| ADMIN-01 | Phase 1 | Built (verify on deploy) |
+| QUEUE-01 | Phase 2 | Built (verify on deploy) |
+| QUEUE-02 | Phase 2 | Built (verify on deploy) |
+| QUEUE-03 | Phase 2 | Built (verify on deploy) |
+| QUEUE-04 | Phase 2 | Built (verify on deploy) |
+| QUEUE-05 | Phase 2 | Built (verify on deploy) |
+| QUEUE-06 | Phase 2 | Built (verify on deploy) |
+| QUEUE-07 | Phase 2 | Built (verify on deploy) |
+| QUEUE-08 | Phase 2 | Built (verify on deploy) |
+| RT-01 | Phase 2 | Built (verify on deploy) |
+| RT-02 | Phase 2 | Built (verify on deploy) |
+| RT-03 | Phase 2 | Built (verify on deploy) |
+| RT-04 | Phase 2 | Built (verify on deploy) |
+| RT-05 | Phase 2 | Built (verify on deploy) |
+| CAT-01 | Phase 3 | Built (verify on deploy) |
+| CAT-02 | Phase 3 | Built (verify on deploy) |
+| CAT-03 | Phase 3 | Built (verify on deploy) |
+| CAT-04 | Phase 3 | Built (verify on deploy) |
+| CAT-05 | Phase 3 | Built (verify on deploy) |
+| STOR-01 | Phase 3 | Built (verify on deploy) |
+| STOR-02 | Phase 3 | Built (verify on deploy) |
+| SRCH-01 | Phase 4 | Built (verify on deploy) |
+| SRCH-02 | Phase 4 | Built (verify on deploy) |
+| SRCH-03 | Phase 4 | Built (verify on deploy) |
+| SRCH-04 | Phase 4 | Built (verify on deploy) |
+| SRCH-05 | Phase 4 | Built (verify on deploy) |
+| SONG-01 | Phase 5 | Built (verify on deploy) |
+| SONG-02 | Phase 5 | Built (verify on deploy) |
+| SONG-03 | Phase 5 | Built (verify on deploy) |
+| SONG-04 | Phase 5 | Built (verify on deploy) |
+| META-01 | Phase 5 | Built (verify on deploy) |
+| META-02 | Phase 5 | Built (verify on deploy) |
+| META-03 | Phase 5 | Built (verify on deploy) |
+| META-04 | Phase 5 | Built (verify on deploy) |
+| PLST-01 | Phase 6 | Built (verify on deploy) |
+| PLST-02 | Phase 6 | Built (verify on deploy) |
+| PLST-03 | Phase 6 | Built (verify on deploy) |
+| PLST-04 | Phase 6 | Built (verify on deploy) |
+| PLST-05 | Phase 6 | Built (verify on deploy) |
+| ADMIN-02 | Phase 6 | Built (verify on deploy) |
+| ADMIN-03 | Phase 6 | Built (verify on deploy) |
+| ADMIN-04 | Phase 6 | Built (verify on deploy) |
+| ADMIN-05 | Phase 6 | Built (verify on deploy) |
+| ADMIN-06 | Phase 6 | Built (verify on deploy) |
 
 **Coverage:**
 - v1 requirements: 50 mapped (header previously said 53 — recount confirmed 50 actual requirements in the file; no orphans found)

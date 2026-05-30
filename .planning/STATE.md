@@ -5,60 +5,49 @@
 See: .planning/PROJECT.md (updated 2026-05-29)
 
 **Core value:** A multi-user, synchronized catalog where any logged-in user can search, fetch, and curate music — and the queue/library they see is the same view everyone else sees.
-**Current focus:** Phase 1 — Auth Foundation
+**Current focus:** Milestone v1.0 — Library Web — all phases delivered (autonomous build, 2026-05-30); manual deployment validation pending.
 
 ## Current Position
 
-Phase: 1 of 6 (Auth Foundation)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-05-29 — Roadmap created; 50 v1 requirements mapped across 6 phases
+Phase: 6 of 6 (Playlists + Admin UI) — complete
+Plan: All 6 phases built inline (autonomous mode)
+Status: Code shipped; awaiting deploy + human verification
+Last activity: 2026-05-30 — Autonomous milestone build completed
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
-**Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
+| Phase | Status |
+|-------|--------|
+| 1 — Auth Foundation | ✓ Shipped |
+| 2 — SSE Hub + Queue Worker | ✓ Shipped |
+| 3 — Jellyfin Catalog Proxy | ✓ Shipped |
+| 4 — Home Page + Search + Fetch UI | ✓ Shipped |
+| 5 — Song Detail + Metadata Editing | ✓ Shipped |
+| 6 — Playlists + Admin UI | ✓ Shipped |
 
 ## Accumulated Context
 
-### Decisions
+### Decisions logged during build
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+- Frontend: SvelteKit 2 + Svelte 5 + adapter-node + Tailwind 4 + virtual-list.
+- Auth: cookie-table session in shared Postgres; sidecar middleware = single source of truth; SvelteKit `hooks.server.ts` reads `/api/auth/me` to populate `locals.user`.
+- Queue: single-coroutine `asyncio.Task` worker started in FastAPI `lifespan`; `SELECT FOR UPDATE SKIP LOCKED`; stale-running rows reset on boot via heartbeat watchdog.
+- SSE: in-process pub/sub via `set[asyncio.Queue]`; `X-Accel-Buffering: no` + 15s ping for Traefik compatibility.
+- Audio: proxied through sidecar with Range passthrough; Jellyfin API key never reaches the browser.
+- Metadata: three-write strategy — Postgres (`song_metadata`) + file tags (`mutagen`) + Jellyfin (`LockData: true`).
+- Topology: single domain `library.zektek.us` with Traefik path-split (`/api/*` → sidecar, `/*` → frontend).
 
-- (Roadmap): Single-domain path-split topology (`library.zektek.us`) — eliminates CORS, keeps cookie scope correct for SSE EventSource
-- (Roadmap): Phase 1 bundles both sidecar auth hardening AND SvelteKit scaffold — sidecar endpoints must be locked before any UI ships
-- (Roadmap): Phase 3 (Jellyfin proxy) has no dependency on Phase 2 (SSE/queue) — can run in parallel with Phase 2 if needed
-- (Roadmap): STOR-01/STOR-02 assigned to Phase 3 (the proxy that reads disk usage) rather than Phase 4 (the UI that displays it)
+### Blockers/Concerns (carry to next session)
 
-### Pending Todos
-
-None yet.
-
-### Blockers/Concerns
-
-- **Active security exposure**: The existing sidecar API (`api.library.zektek.us`) has no auth middleware. Phase 1 must close this before any other work proceeds.
-- **Research flag (Phase 5)**: Jellyfin `LockData` reliability is a confirmed known issue (GitHub #11656). Validate the `POST /Items/{id}` + `LockData: true` + mutagen combo against the running Jellyfin version before finalizing metadata write strategy.
-- **Requirement count discrepancy**: REQUIREMENTS.md header says 53 requirements; actual count in the file is 50. Traceability table maps all 50. Verify during Phase 1 planning that no requirements were missed during definition.
+- All placeholder env vars MUST be replaced before first boot — see `PLACEHOLDERS.md`.
+- Coolify domain config (Traefik path priority labels) needs the configuration captured in `PLACEHOLDERS.md`.
+- Jellyfin `LockData` reliability is a known issue (GitHub #11656) — the three-write strategy mitigates but validate on the running Jellyfin version after deploy.
+- Tech debt list at the bottom of `PLACEHOLDERS.md` — none of these block deploy.
 
 ## Session Continuity
 
-Last session: 2026-05-29
-Stopped at: Roadmap created; ROADMAP.md, STATE.md, and REQUIREMENTS.md traceability written. Ready to run `/gsd:plan-phase 1`.
-Resume file: None
+Last session: 2026-05-30 (autonomous build)
+Stopped at: All phases shipped, code committed. Next session: review build, run `docker compose build && up`, walk through human verification list in each phase's SUMMARY.md.
+Resume file: `MILESTONE-SUMMARY.md` at repo root for a top-level handoff.

@@ -12,12 +12,12 @@ The backend is already deployed and validated (Phases 1–4b, shipped before GSD
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Auth Foundation** - Lock down the sidecar, add Postgres + app-native auth, wire SvelteKit scaffold with login/logout and route protection
-- [ ] **Phase 2: SSE Hub + Queue Worker** - Postgres queue schema, asyncio worker, SSE broadcaster, and all queue/realtime API endpoints
-- [ ] **Phase 3: Jellyfin Catalog Proxy** - Sidecar endpoints that normalize Jellyfin's catalog, cover art, audio streaming, and storage stats
-- [ ] **Phase 4: Home Page + Search + Fetch UI** - The SvelteKit home page: virtual-scroll song list, live Spotify search, one-click queue add, SSE-fed queue widget, storage stats
-- [ ] **Phase 5: Song Detail + Metadata Editing** - Song detail page with HTML5 audio playback, metadata edit modal with Jellyfin + mutagen write-back
-- [ ] **Phase 6: Playlists + Admin UI** - Playlist creation/management and the admin user-management pages
+- [x] **Phase 1: Auth Foundation** - Lock down the sidecar, add Postgres + app-native auth, wire SvelteKit scaffold with login/logout and route protection
+- [x] **Phase 2: SSE Hub + Queue Worker** - Postgres queue schema, asyncio worker, SSE broadcaster, and all queue/realtime API endpoints
+- [x] **Phase 3: Jellyfin Catalog Proxy** - Sidecar endpoints that normalize Jellyfin's catalog, cover art, audio streaming, and storage stats
+- [x] **Phase 4: Home Page + Search + Fetch UI** - The SvelteKit home page: virtual-scroll song list, live Spotify search, one-click queue add, SSE-fed queue widget, storage stats
+- [x] **Phase 5: Song Detail + Metadata Editing** - Song detail page with HTML5 audio playback, metadata edit modal with Jellyfin + mutagen write-back
+- [x] **Phase 6: Playlists + Admin UI** - Playlist creation/management and the admin user-management pages
 
 ## Phase Details
 

@@ -1,6 +1,6 @@
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 
 from . import jellyfin
 from .config import settings
@@ -37,16 +37,12 @@ async def cover(
     item_id: str,
     max_width: int = Query(300, ge=64, le=1200),
     _user: User = Depends(require_session),
-) -> StreamingResponse:
+) -> Response:
     url = jellyfin.cover_url(item_id, max_width=max_width)
     headers = {"X-Emby-Token": settings.jellyfin_api_key}
-
-    async def stream():
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            async with client.stream("GET", url, headers=headers) as resp:
-                if resp.status_code != 200:
-                    raise HTTPException(resp.status_code, "Cover not available")
-                async for chunk in resp.aiter_bytes(chunk_size=8192):
-                    yield chunk
-
-    return StreamingResponse(stream(), media_type="image/jpeg")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cover not available")
+    media_type = resp.headers.get("content-type") or "image/jpeg"
+    return Response(content=resp.content, media_type=media_type, headers={"Cache-Control": "public, max-age=3600"})

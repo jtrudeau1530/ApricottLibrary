@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from .queue_routes import router as queue_router
 from .sessions import require_admin, require_session
 from .spotify import spotify
 from .sse_routes import router as sse_router
+from .storage import compute_storage_snapshot
 
 log = logging.getLogger("sidecar")
 
@@ -127,14 +127,8 @@ async def download(track_id: str, _user: User = Depends(require_session)) -> dic
 
 @api_router.get("/storage")
 async def storage(_user: User = Depends(require_session)) -> dict:
-    """Disk usage for the media volume — backs the home page storage widget."""
-    total, used, free = shutil.disk_usage(settings.media_path)
-    return {
-        "total_bytes": total,
-        "used_bytes": used,
-        "free_bytes": free,
-        "percent_used": round(used * 100 / total, 2) if total else 0.0,
-    }
+    """Library-bytes used (recursive sum under MEDIA_PATH), filesystem total as capacity."""
+    return await asyncio.to_thread(compute_storage_snapshot, settings.media_path)
 
 
 app.include_router(api_router)

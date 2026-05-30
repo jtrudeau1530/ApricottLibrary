@@ -81,20 +81,28 @@ async def list_tracks(
 
 
 async def get_track(item_id: str) -> dict[str, Any] | None:
-    url = f"{_base_url()}/Items/{quote(item_id)}"
-    params = {"Fields": "Artists,Album,RunTimeTicks,DateCreated,Overview,Path"}
+    """Use /Items?Ids= (works without UserId scope, unlike /Items/{id} in 10.9+)."""
+    url = f"{_base_url()}/Items"
+    params = {
+        "Ids": item_id,
+        "IncludeItemTypes": "Audio",
+        "Recursive": "true",
+        "Fields": "Artists,Album,RunTimeTicks,DateCreated,Overview,Path",
+    }
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url, params=params, headers=_headers())
-        if resp.status_code == 404:
-            return None
         if resp.status_code != 200:
-            log.warning("Jellyfin item %s returned %s", item_id, resp.status_code)
+            log.warning("Jellyfin item lookup %s returned %s: %s", item_id, resp.status_code, resp.text[:200])
             return None
         body = resp.json()
-    normalized = _normalize_track(body)
-    normalized["description"] = body.get("Overview") or ""
-    normalized["path"] = body.get("Path")
-    normalized["_raw"] = body
+    items = body.get("Items") or []
+    if not items:
+        return None
+    raw = items[0]
+    normalized = _normalize_track(raw)
+    normalized["description"] = raw.get("Overview") or ""
+    normalized["path"] = raw.get("Path")
+    normalized["_raw"] = raw
     return normalized
 
 

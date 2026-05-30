@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import re
-import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+from mutagen.oggvorbis import OggVorbis
 from sqlalchemy import select, update
 
 from . import librespot_session
@@ -13,6 +13,7 @@ from .config import settings
 from .db import SessionLocal
 from .models import FetchQueue
 from .sse_hub import publish
+from .storage import compute_storage_snapshot
 
 log = logging.getLogger("queue_worker")
 
@@ -117,17 +118,23 @@ async def _trigger_jellyfin_refresh() -> None:
 
 async def _emit_storage_update() -> None:
     try:
-        total, used, _ = shutil.disk_usage(settings.media_path)
-        await publish(
-            "storage:update",
-            {
-                "total_bytes": total,
-                "used_bytes": used,
-                "percent_used": round(used * 100 / total, 2) if total else 0.0,
-            },
-        )
+        snap = await asyncio.to_thread(compute_storage_snapshot, settings.media_path)
+        await publish("storage:update", snap)
     except Exception as exc:  # pragma: no cover
         log.debug("Storage update emit failed: %s", exc)
+
+
+def _write_ogg_tags(path: Path, title: str, artist: str, album: str) -> None:
+    """librespot writes raw OGG with no Vorbis comments. Fill in so Jellyfin can read them."""
+    try:
+        audio = OggVorbis(path)
+        audio["title"] = title
+        audio["artist"] = artist
+        if album:
+            audio["album"] = album
+        audio.save()
+    except Exception as exc:
+        log.warning("Failed to write OGG tags on %s: %s", path, exc)
 
 
 async def _download_one(row: FetchQueue) -> None:
@@ -162,6 +169,10 @@ async def _download_one(row: FetchQueue) -> None:
         await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
         if heartbeat_task:
             heartbeat_task.cancel()
+        # librespot output has no Vorbis comments — write title/artist/album so Jellyfin tags correctly.
+        await asyncio.to_thread(
+            _write_ogg_tags, output_path, row.track_name, row.artist_name, row.album_name or ""
+        )
         await _mark_complete(row.id, output_path)
         await publish(
             "queue:complete",

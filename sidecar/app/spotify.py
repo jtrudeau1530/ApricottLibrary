@@ -31,7 +31,11 @@ class SpotifyClient:
             data={"grant_type": "client_credentials"},
             auth=(settings.spotify_client_id, settings.spotify_client_secret),
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Spotify token request failed ({resp.status_code}): {resp.text[:200]}",
+            )
         payload = resp.json()
         self._token = payload["access_token"]
         self._expires_at = time.time() + payload["expires_in"]
@@ -44,7 +48,11 @@ class SpotifyClient:
             params={"q": query, "type": "track", "limit": limit},
             headers={"Authorization": f"Bearer {token}"},
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Spotify search failed ({resp.status_code}): {resp.text[:200]}",
+            )
         items = resp.json().get("tracks", {}).get("items", [])
         return [_to_track(item) for item in items]
 

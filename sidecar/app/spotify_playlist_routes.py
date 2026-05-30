@@ -1,6 +1,9 @@
+import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +15,33 @@ from .sse_hub import publish
 
 log = logging.getLogger("spotify_playlists")
 router = APIRouter(prefix="/api/spotify/playlists", tags=["spotify-playlists"])
+
+paste_router = APIRouter(prefix="/api/spotify/paste", tags=["spotify-paste"])
+
+# Matches "track:abc123…" "track/abc123…" "tracks/abc123…" forms anywhere.
+# Spotify IDs are base62, always 22 chars.
+_TRACK_ID_RE = re.compile(r"track[s/:]([A-Za-z0-9]{22})")
+# Standalone bare 22-char IDs on their own line.
+_BARE_ID_RE = re.compile(r"(?:^|[^A-Za-z0-9])([A-Za-z0-9]{22})(?=[^A-Za-z0-9]|$)")
+
+
+def _extract_track_ids(text: str) -> list[str]:
+    seen: set[str] = set()
+    ids: list[str] = []
+    for m in _TRACK_ID_RE.finditer(text):
+        tid = m.group(1)
+        if tid not in seen:
+            seen.add(tid)
+            ids.append(tid)
+    # Only consider bare-22-char matches if we found nothing via track/ pattern,
+    # to avoid false positives from album IDs, playlist IDs, etc.
+    if not ids:
+        for m in _BARE_ID_RE.finditer(text):
+            tid = m.group(1)
+            if tid not in seen:
+                seen.add(tid)
+                ids.append(tid)
+    return ids
 
 
 @router.get("")
@@ -133,6 +163,204 @@ async def list_playlist_tracks(
         "queued_count": sum(1 for t in annotated if t["already_queued"]),
         "library_count": sum(1 for t in annotated if t["already_in_library"]),
         "items": annotated,
+    }
+
+
+class PasteRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+
+
+async def _resolve_tracks(track_ids: list[str]) -> tuple[list[dict], list[str]]:
+    """Resolve track metadata for each ID via Spotify. Returns (tracks, missing_ids)."""
+    results: list[dict] = []
+    missing: list[str] = []
+
+    async def _one(tid: str) -> None:
+        try:
+            tr = await spotify.get_track(tid)
+            if tr is None:
+                missing.append(tid)
+            else:
+                results.append(tr)
+        except Exception as exc:  # pragma: no cover
+            log.warning("Failed to resolve %s: %s", tid, exc)
+            missing.append(tid)
+
+    # Modest concurrency to avoid Spotify rate-limiting.
+    sem = asyncio.Semaphore(5)
+
+    async def _bound(tid: str) -> None:
+        async with sem:
+            await _one(tid)
+
+    await asyncio.gather(*(_bound(t) for t in track_ids))
+    # Preserve input order.
+    by_id = {t["id"]: t for t in results}
+    ordered = [by_id[t] for t in track_ids if t in by_id]
+    return ordered, missing
+
+
+@paste_router.post("/preview")
+async def paste_preview(
+    body: PasteRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_session),
+) -> dict:
+    ids = _extract_track_ids(body.text)
+    if not ids:
+        return {
+            "found_ids": 0,
+            "tracks": [],
+            "missing_ids": [],
+            "queued_count": 0,
+            "library_count": 0,
+        }
+
+    tracks, missing = await _resolve_tracks(ids)
+    resolved_ids = [t["id"] for t in tracks]
+
+    queued_set: set[str] = set()
+    library_set: set[str] = set()
+    if resolved_ids:
+        q_rows = (
+            await db.execute(
+                select(FetchQueue.spotify_track_id).where(
+                    FetchQueue.spotify_track_id.in_(resolved_ids),
+                    FetchQueue.status.in_(["queued", "running"]),
+                )
+            )
+        ).all()
+        queued_set = {r[0] for r in q_rows}
+
+        l_rows = (
+            await db.execute(
+                select(SongMetadata.spotify_track_id).where(
+                    SongMetadata.spotify_track_id.in_(resolved_ids)
+                )
+            )
+        ).all()
+        library_set = {r[0] for r in l_rows if r[0]}
+
+    annotated = [
+        {
+            **t,
+            "already_queued": t["id"] in queued_set,
+            "already_in_library": t["id"] in library_set,
+        }
+        for t in tracks
+    ]
+    return {
+        "found_ids": len(ids),
+        "resolved_count": len(annotated),
+        "missing_ids": missing,
+        "queued_count": sum(1 for t in annotated if t["already_queued"]),
+        "library_count": sum(1 for t in annotated if t["already_in_library"]),
+        "tracks": annotated,
+    }
+
+
+@paste_router.post("/import", status_code=status.HTTP_202_ACCEPTED)
+async def paste_import(
+    body: PasteRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_session),
+) -> dict:
+    if not user.can_fetch:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have fetch permission")
+    ids = _extract_track_ids(body.text)
+    if not ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No Spotify track IDs found. Paste track URLs, URIs, or CSV from Exportify.",
+        )
+
+    tracks, missing = await _resolve_tracks(ids)
+    track_ids = [t["id"] for t in tracks]
+    if not track_ids:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Spotify failed to resolve any of {len(ids)} ids.",
+        )
+
+    queued_set = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(FetchQueue.spotify_track_id).where(
+                    FetchQueue.spotify_track_id.in_(track_ids),
+                    FetchQueue.status.in_(["queued", "running"]),
+                )
+            )
+        ).all()
+    }
+    library_set = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(SongMetadata.spotify_track_id).where(
+                    SongMetadata.spotify_track_id.in_(track_ids)
+                )
+            ).all()
+        )
+        if r[0]
+    }
+
+    enqueued = 0
+    skipped_queued = 0
+    skipped_library = 0
+    new_rows: list[FetchQueue] = []
+    for t in tracks:
+        sid = t["id"]
+        if sid in library_set:
+            skipped_library += 1
+            continue
+        if sid in queued_set:
+            skipped_queued += 1
+            continue
+        new_rows.append(
+            FetchQueue(
+                spotify_track_id=sid,
+                track_name=t.get("name") or "",
+                artist_name=(t.get("artists") or ["Unknown"])[0] if t.get("artists") else "Unknown",
+                album_name=t.get("album") or "",
+                cover_url=t.get("cover_url"),
+                requester_id=user.id,
+            )
+        )
+        queued_set.add(sid)
+        enqueued += 1
+
+    if new_rows:
+        db.add_all(new_rows)
+        await db.commit()
+        for r in new_rows:
+            await publish(
+                "queue:added",
+                {
+                    "id": r.id,
+                    "spotify_track_id": r.spotify_track_id,
+                    "track_name": r.track_name,
+                    "artist_name": r.artist_name,
+                    "album_name": r.album_name,
+                    "cover_url": r.cover_url,
+                    "requester_id": r.requester_id,
+                    "requester_username": user.username,
+                    "status": r.status,
+                    "progress": 0,
+                    "error_message": None,
+                    "attempts": 0,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "started_at": None,
+                    "completed_at": None,
+                },
+            )
+
+    return {
+        "enqueued": enqueued,
+        "skipped_queued": skipped_queued,
+        "skipped_library": skipped_library,
+        "missing_ids": missing,
+        "total_found": len(ids),
     }
 
 

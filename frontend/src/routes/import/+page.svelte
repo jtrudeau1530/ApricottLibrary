@@ -44,6 +44,76 @@
   } | null>(null);
   let importError = $state<string | null>(null);
 
+  // ---- Paste flow ----
+  let pasteText = $state('');
+  let pastePreview = $state<{
+    found_ids: number;
+    resolved_count: number;
+    missing_ids: string[];
+    queued_count: number;
+    library_count: number;
+    tracks: PlaylistTrack[];
+  } | null>(null);
+  let pasteLoading = $state(false);
+  let pasteError = $state<string | null>(null);
+  let pasteImporting = $state(false);
+  let pasteResult = $state<{
+    enqueued: number;
+    skipped_queued: number;
+    skipped_library: number;
+    missing_ids: string[];
+    total_found: number;
+  } | null>(null);
+
+  async function previewPaste() {
+    if (!pasteText.trim()) return;
+    pasteLoading = true;
+    pasteError = null;
+    pastePreview = null;
+    pasteResult = null;
+    try {
+      const res = await fetch('/api/spotify/paste/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: pasteText })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Failed (${res.status})`));
+      }
+      pastePreview = await res.json();
+    } catch (e) {
+      pasteError = (e as Error).message;
+    } finally {
+      pasteLoading = false;
+    }
+  }
+
+  async function importPaste() {
+    pasteImporting = true;
+    pasteError = null;
+    try {
+      const res = await fetch('/api/spotify/paste/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: pasteText })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Failed (${res.status})`));
+      }
+      pasteResult = await res.json();
+    } catch (e) {
+      pasteError = (e as Error).message;
+    } finally {
+      pasteImporting = false;
+    }
+  }
+
+  let pasteWillEnqueue = $derived(
+    pastePreview ? pastePreview.resolved_count - pastePreview.queued_count - pastePreview.library_count : 0
+  );
+
   async function selectPlaylist(p: Playlist) {
     selected = p;
     preview = null;
@@ -101,9 +171,99 @@
   </header>
 
   <p class="text-sm text-zinc-400 mb-6">
-    Pick one of your Spotify playlists; we'll queue any tracks that aren't already in the library or
-    fetch queue.
+    Pick one of your Spotify playlists below, or paste Spotify track links / exported CSV.
   </p>
+
+  <!-- Paste flow — works even when Spotify denies the playlist tracks endpoint -->
+  <section class="rounded-2xl bg-zinc-900 p-5 mb-6">
+    <h2 class="font-semibold mb-1">Paste Spotify tracks</h2>
+    <p class="text-xs text-zinc-500 mb-3">
+      Paste any text — track URLs, URIs, IDs, or CSV from
+      <a href="https://watsonbox.github.io/exportify/" target="_blank" rel="noopener" class="text-apricot-400 hover:underline">Exportify</a>,
+      Soundiiz, TuneMyMusic, etc. We pull the Spotify track IDs out of it.
+    </p>
+    <textarea
+      bind:value={pasteText}
+      placeholder={'https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp\nspotify:track:3n3Ppam7vgaVa1iaRUc9Lp\n…'}
+      rows="6"
+      class="w-full rounded-lg bg-zinc-800 px-3 py-2 font-mono text-xs"
+    ></textarea>
+
+    <div class="mt-3 flex items-center gap-3">
+      <button
+        type="button"
+        onclick={previewPaste}
+        disabled={pasteLoading || !pasteText.trim()}
+        class="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-sm disabled:opacity-50"
+      >
+        {pasteLoading ? 'Scanning…' : 'Preview'}
+      </button>
+      {#if pastePreview}
+        <span class="text-sm text-zinc-400">
+          Found {pastePreview.found_ids} ids
+          <span class="mx-2 text-zinc-600">·</span>
+          <span class="text-apricot-400">{pasteWillEnqueue} new</span>
+          <span class="mx-2 text-zinc-600">·</span>
+          {pastePreview.library_count} in library
+          <span class="mx-2 text-zinc-600">·</span>
+          {pastePreview.queued_count} already queued
+          {#if pastePreview.missing_ids.length > 0}
+            <span class="mx-2 text-zinc-600">·</span>
+            <span class="text-red-400">{pastePreview.missing_ids.length} unresolved</span>
+          {/if}
+        </span>
+        <button
+          type="button"
+          onclick={importPaste}
+          disabled={pasteImporting || pasteWillEnqueue === 0}
+          class="ml-auto rounded-lg bg-apricot-500 hover:bg-apricot-600 text-zinc-950 font-semibold px-4 py-2 disabled:opacity-50"
+        >
+          {pasteImporting ? 'Importing…' : `Add ${pasteWillEnqueue} to queue`}
+        </button>
+      {/if}
+    </div>
+
+    {#if pasteError}
+      <p class="mt-3 text-sm text-red-400">{pasteError}</p>
+    {/if}
+    {#if pasteResult}
+      <div class="mt-3 rounded-lg border border-apricot-500/40 bg-apricot-900/20 px-4 py-3 text-sm">
+        <strong>Done.</strong>
+        Enqueued {pasteResult.enqueued}, skipped {pasteResult.skipped_library} in library,
+        skipped {pasteResult.skipped_queued} already queued
+        {#if pasteResult.missing_ids.length > 0}
+          ({pasteResult.missing_ids.length} ids couldn't be resolved)
+        {/if}.
+      </div>
+    {/if}
+
+    {#if pastePreview && pastePreview.tracks.length > 0}
+      <ul class="mt-4 divide-y divide-zinc-800 rounded-lg bg-zinc-950 max-h-72 overflow-y-auto">
+        {#each pastePreview.tracks as t (t.id)}
+          <li class="px-4 py-2 flex items-center gap-3">
+            {#if t.cover_url}
+              <img src={t.cover_url} alt="" class="w-8 h-8 rounded" loading="lazy" />
+            {:else}
+              <div class="w-8 h-8 rounded bg-zinc-800"></div>
+            {/if}
+            <div class="flex-1 min-w-0">
+              <p class="truncate text-sm">{t.name}</p>
+              <p class="truncate text-xs text-zinc-500">{t.artists.join(', ')}</p>
+            </div>
+            {#if t.already_in_library}
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">In library</span>
+            {:else if t.already_queued}
+              <span class="text-xs px-2 py-0.5 rounded bg-apricot-900 text-apricot-200">Queued</span>
+            {:else}
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-500">New</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
+  <h2 class="font-semibold mb-3">Or pick a playlist</h2>
 
   <div class="grid lg:grid-cols-[360px_1fr] gap-6">
     <!-- Playlist list -->

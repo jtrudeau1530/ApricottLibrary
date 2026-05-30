@@ -77,3 +77,30 @@ async def song_view(item_id: str, _user: User = Depends(require_session)) -> dic
     if view is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
     return view
+
+
+@router.get("/debug/jellyfin/{item_id}")
+async def debug_jellyfin(item_id: str, _user: User = Depends(require_session)) -> dict:
+    """Raw Jellyfin item payload — to diagnose missing artist/backdrop/cover."""
+    raw = await jellyfin.get_item(item_id)
+    if raw is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found in Jellyfin")
+    return raw
+
+
+@router.get("/debug/jellyfin-health")
+async def debug_jellyfin_health(_user: User = Depends(require_session)) -> dict:
+    """Hit Jellyfin's /System/Info/Public to verify the API key + reachability."""
+    import httpx
+
+    url = f"{settings.jellyfin_internal_url.rstrip('/')}/System/Info"
+    headers = {"X-Emby-Token": settings.jellyfin_api_key}
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        resp = await client.get(url, headers=headers)
+    return {
+        "status_code": resp.status_code,
+        "reachable": resp.status_code != 0,
+        "body_preview": resp.text[:400],
+        "internal_url": settings.jellyfin_internal_url,
+        "api_key_set": bool(settings.jellyfin_api_key and settings.jellyfin_api_key != "REPLACE_WITH_JELLYFIN_API_KEY"),
+    }

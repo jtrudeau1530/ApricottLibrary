@@ -33,13 +33,21 @@ def _normalize_track(item: dict) -> dict[str, Any]:
     duration_seconds = round(runtime_ticks / 10_000_000) if runtime_ticks else None
     artists = item.get("Artists") or []
     item_id = item.get("Id")
+    album_id = item.get("AlbumId")
+    has_track_image = bool((item.get("ImageTags") or {}).get("Primary"))
+    if has_track_image and item_id:
+        cover_target = item_id
+    elif album_id:
+        cover_target = album_id
+    else:
+        cover_target = item_id
     return {
         "id": item_id,
         "title": item.get("Name") or "",
         "artist": ", ".join(artists) if artists else "",
         "album": item.get("Album") or "",
         "duration_seconds": duration_seconds,
-        "album_art_url": f"/api/catalog/cover/{item_id}" if item_id else None,
+        "album_art_url": f"/api/catalog/cover/{cover_target}" if cover_target else None,
         "added_at": item.get("DateCreated"),
     }
 
@@ -56,7 +64,7 @@ async def list_tracks(
     params: dict[str, Any] = {
         "IncludeItemTypes": "Audio",
         "Recursive": "true",
-        "Fields": "Artists,Album,RunTimeTicks,DateCreated",
+        "Fields": "Artists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags",
         "SortBy": sort_by,
         "SortOrder": "Descending" if descending else "Ascending",
         "Limit": limit,
@@ -302,5 +310,6 @@ def logo_url(item_id: str, max_width: int = 800) -> str:
 
 
 def audio_url(item_id: str) -> str:
-    # Jellyfin's /Audio/{id}/stream returns the raw file; Range supported.
-    return f"{_base_url()}/Audio/{quote(item_id)}/stream"
+    # /Items/{id}/Download streams the original file (no transcoding negotiation,
+    # supports Range, content-type set from the file extension).
+    return f"{_base_url()}/Items/{quote(item_id)}/Download?Static=true"

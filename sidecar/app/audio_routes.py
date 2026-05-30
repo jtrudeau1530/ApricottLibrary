@@ -30,9 +30,13 @@ async def stream_audio(
     req = client.build_request("GET", url, headers=upstream_headers)
     resp = await client.send(req, stream=True)
     if resp.status_code not in (200, 206):
+        body_preview = (await resp.aread())[:200]
         await resp.aclose()
         await client.aclose()
-        raise HTTPException(resp.status_code, "Audio unavailable")
+        raise HTTPException(
+            resp.status_code,
+            f"Audio unavailable ({resp.status_code}): {body_preview!r}",
+        )
 
     media_type = resp.headers.get("content-type") or "application/octet-stream"
     pass_headers = {

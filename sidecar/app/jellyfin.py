@@ -82,7 +82,7 @@ async def list_tracks(
 
 async def get_track(item_id: str) -> dict[str, Any] | None:
     url = f"{_base_url()}/Items/{quote(item_id)}"
-    params = {"Fields": "Artists,Album,RunTimeTicks,DateCreated,Overview"}
+    params = {"Fields": "Artists,Album,RunTimeTicks,DateCreated,Overview,Path"}
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url, params=params, headers=_headers())
         if resp.status_code == 404:
@@ -93,6 +93,8 @@ async def get_track(item_id: str) -> dict[str, Any] | None:
         body = resp.json()
     normalized = _normalize_track(body)
     normalized["description"] = body.get("Overview") or ""
+    normalized["path"] = body.get("Path")
+    normalized["_raw"] = body
     return normalized
 
 

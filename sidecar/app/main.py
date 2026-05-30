@@ -18,6 +18,7 @@ from .config import settings
 from .models import User
 from .audio_routes import router as audio_router
 from .catalog_routes import router as catalog_router
+from .metadata_routes import router as metadata_router
 from .playlist_routes import router as playlist_router
 from .queue_routes import router as queue_router
 from .sessions import require_admin, require_session
@@ -70,6 +71,7 @@ app.include_router(sse_router)
 app.include_router(catalog_router)
 app.include_router(audio_router)
 app.include_router(playlist_router)
+app.include_router(metadata_router)
 
 
 # Authenticated wrappers around the existing Spotify + librespot routers.

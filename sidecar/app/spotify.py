@@ -1,9 +1,13 @@
+import logging
 import time
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException
 
 from .config import settings
+
+log = logging.getLogger("spotify")
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 SEARCH_URL = "https://api.spotify.com/v1/search"
@@ -43,12 +47,21 @@ class SpotifyClient:
 
     async def search_tracks(self, query: str, limit: int = 20) -> list[dict]:
         token = await self._get_token()
+        # Build URL manually so the integer limit is unambiguous and ordered.
+        safe_limit = max(1, min(int(limit), 50))
+        query_string = urlencode(
+            [("q", query), ("type", "track"), ("limit", str(safe_limit))]
+        )
+        url = f"{SEARCH_URL}?{query_string}"
         resp = await self._client.get(
-            SEARCH_URL,
-            params={"q": query, "type": "track", "limit": limit},
-            headers={"Authorization": f"Bearer {token}"},
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
         )
         if resp.status_code != 200:
+            log.warning("Spotify search %s returned %s: %s", url, resp.status_code, resp.text[:300])
             raise HTTPException(
                 status_code=502,
                 detail=f"Spotify search failed ({resp.status_code}): {resp.text[:200]}",

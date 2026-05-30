@@ -32,6 +32,7 @@
     </div>
     <div class="flex items-center gap-3 text-sm">
       <a href="/playlists" class="text-zinc-400 hover:text-zinc-100">Playlists</a>
+      <a href="/import" class="text-zinc-400 hover:text-zinc-100">Import</a>
       <span class="text-zinc-500">·</span>
       <a
         href={data.user?.is_admin ? '/admin' : undefined}

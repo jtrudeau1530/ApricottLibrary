@@ -6,12 +6,12 @@ from pathlib import Path
 
 import httpx
 from mutagen.oggvorbis import OggVorbis
-from sqlalchemy import select, update
+from sqlalchemy import select, update  # noqa: F401
 
-from . import librespot_session
+from . import jellyfin, librespot_session
 from .config import settings
 from .db import SessionLocal
-from .models import FetchQueue
+from .models import FetchQueue, SongMetadata
 from .sse_hub import publish
 from .storage import compute_storage_snapshot
 
@@ -137,6 +137,45 @@ def _write_ogg_tags(path: Path, title: str, artist: str, album: str) -> None:
         log.warning("Failed to write OGG tags on %s: %s", path, exc)
 
 
+async def _record_spotify_mapping(row: FetchQueue, output_path: Path) -> None:
+    """After Jellyfin scans the new file, find the matching item by Path and
+    persist the spotify_track_id ↔ jellyfin_item_id mapping in song_metadata."""
+    # Give Jellyfin a moment to scan (best-effort; we don't block the worker forever).
+    await asyncio.sleep(3)
+    for _ in range(6):  # ~24s total with the trailing sleep below
+        try:
+            result = await jellyfin.list_tracks(sort="added", limit=50)
+            for item in result.get("items", []):
+                # Match by track id won't work since we don't have it yet;
+                # use the filename. Jellyfin doesn't expose the file path on list,
+                # so we fetch each item's full metadata only if title matches.
+                if item.get("title", "").lower() == row.track_name.lower():
+                    full = await jellyfin.get_track(item["id"])
+                    if full and full.get("path", "").endswith(output_path.name):
+                        async with SessionLocal() as db:
+                            existing = (
+                                await db.execute(
+                                    select(SongMetadata).where(
+                                        SongMetadata.jellyfin_item_id == item["id"]
+                                    )
+                                )
+                            ).scalar_one_or_none()
+                            if existing is None:
+                                db.add(
+                                    SongMetadata(
+                                        jellyfin_item_id=item["id"],
+                                        spotify_track_id=row.spotify_track_id,
+                                    )
+                                )
+                            else:
+                                existing.spotify_track_id = row.spotify_track_id
+                            await db.commit()
+                        return
+        except Exception as exc:  # pragma: no cover
+            log.debug("Mapping resolve attempt failed: %s", exc)
+        await asyncio.sleep(4)
+
+
 async def _save_album_cover(album_dir: Path, cover_url: str | None) -> None:
     """Save cover.jpg next to the audio file. Jellyfin auto-picks these up on scan."""
     if not cover_url:
@@ -195,6 +234,8 @@ async def _download_one(row: FetchQueue) -> None:
         # Save album cover next to the file so Jellyfin picks it up as album art.
         await _save_album_cover(output_path.parent, row.cover_url)
         await _mark_complete(row.id, output_path)
+        # Best-effort: record spotify_track_id → jellyfin_item_id once Jellyfin sees it.
+        asyncio.create_task(_record_spotify_mapping(row, output_path))
         await publish(
             "queue:complete",
             {"id": row.id, "output_path": str(output_path.relative_to(settings.media_path))},

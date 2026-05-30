@@ -62,7 +62,12 @@ class SpotifyClient:
         safe_limit = max(1, min(int(limit), 50))
         resp = await self._client.get(
             SEARCH_URL,
-            params={"q": query, "type": "track", "limit": str(safe_limit)},
+            params={
+                "q": query,
+                "type": "track",
+                "limit": str(safe_limit),
+                "market": "from_token",
+            },
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
@@ -75,9 +80,7 @@ class SpotifyClient:
             )
             hint = ""
             if resp.status_code in (401, 403):
-                hint = " (token rejected — try /api/auth/spotify/login to reconnect)"
-            elif resp.status_code == 400 and "limit" in resp.text.lower():
-                hint = " (Spotify rejects client-credentials tokens here — connect your account at /api/auth/spotify/login)"
+                hint = " (token rejected — reconnect at /api/auth/spotify/login)"
             raise HTTPException(
                 status_code=502,
                 detail=f"Spotify search failed ({resp.status_code}){hint}: {resp.text[:200]}",
@@ -91,7 +94,12 @@ class SpotifyClient:
         safe_limit = max(1, min(int(limit), 50))
         resp = await self._client.get(
             SEARCH_URL,
-            params={"q": query, "type": "track", "limit": str(safe_limit)},
+            params={
+                "q": query,
+                "type": "track",
+                "limit": str(safe_limit),
+                "market": "from_token",
+            },
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",

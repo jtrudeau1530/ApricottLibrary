@@ -37,13 +37,9 @@ async def search(
 
 @app.post("/download/{track_id}")
 async def download(track_id: str) -> dict:
-    tracks = await spotify.search_tracks(f"track:{track_id}", limit=1)
-    meta = next((t for t in tracks if t["id"] == track_id), None)
+    meta = await spotify.get_track(track_id)
     if meta is None:
-        full = await spotify.search_tracks(track_id, limit=5)
-        meta = next((t for t in full if t["id"] == track_id), None)
-    if meta is None:
-        raise HTTPException(404, f"Track {track_id} not found via Spotify search")
+        raise HTTPException(404, f"Track {track_id} not found on Spotify")
 
     artist = _safe(meta["artists"][0] if meta["artists"] else "Unknown")
     album = _safe(meta["album"] or "Unknown")

@@ -7,6 +7,7 @@ from .config import settings
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 SEARCH_URL = "https://api.spotify.com/v1/search"
+TRACK_URL = "https://api.spotify.com/v1/tracks/{id}"
 
 
 class SpotifyClient:
@@ -46,6 +47,17 @@ class SpotifyClient:
         resp.raise_for_status()
         items = resp.json().get("tracks", {}).get("items", [])
         return [_to_track(item) for item in items]
+
+    async def get_track(self, track_id: str) -> dict | None:
+        token = await self._get_token()
+        resp = await self._client.get(
+            TRACK_URL.format(id=track_id),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return _to_track(resp.json())
 
 
 def _to_track(item: dict) -> dict:

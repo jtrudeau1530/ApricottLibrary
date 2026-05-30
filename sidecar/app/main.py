@@ -16,6 +16,7 @@ from .auth import router as spotify_auth_router
 from .auth_routes import router as session_auth_router
 from .config import settings
 from .models import User
+from .admin_routes import router as admin_router
 from .audio_routes import router as audio_router
 from .catalog_routes import router as catalog_router
 from .metadata_routes import router as metadata_router
@@ -72,6 +73,7 @@ app.include_router(catalog_router)
 app.include_router(audio_router)
 app.include_router(playlist_router)
 app.include_router(metadata_router)
+app.include_router(admin_router)
 
 
 # Authenticated wrappers around the existing Spotify + librespot routers.

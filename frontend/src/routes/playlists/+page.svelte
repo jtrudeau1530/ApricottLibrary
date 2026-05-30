@@ -42,7 +42,7 @@
 </script>
 
 <svelte:head>
-  <title>Playlists · Apricot Library</title>
+  <title>Playlists · Apricott Library</title>
 </svelte:head>
 
 <main class="min-h-screen p-6 max-w-3xl mx-auto space-y-6">

@@ -44,7 +44,7 @@
 </script>
 
 <svelte:head>
-  <title>{track.title} · Apricot Library</title>
+  <title>{track.title} · Apricott Library</title>
 </svelte:head>
 
 <main class="min-h-screen p-6">

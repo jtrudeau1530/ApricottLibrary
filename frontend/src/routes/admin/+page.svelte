@@ -82,7 +82,7 @@
 </script>
 
 <svelte:head>
-  <title>Admin · Apricot Library</title>
+  <title>Admin · Apricott Library</title>
 </svelte:head>
 
 <main class="min-h-screen p-6 max-w-4xl mx-auto space-y-8">

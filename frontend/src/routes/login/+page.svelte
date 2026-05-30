@@ -6,12 +6,12 @@
 </script>
 
 <svelte:head>
-  <title>Sign in · Apricot Library</title>
+  <title>Sign in · Apricott Library</title>
 </svelte:head>
 
 <div class="min-h-screen grid place-items-center px-4">
   <div class="w-full max-w-sm rounded-2xl bg-zinc-900 p-8 shadow-xl">
-    <h1 class="text-2xl font-semibold mb-1 text-apricot-400">Apricot Library</h1>
+    <h1 class="font-wordmark text-4xl mb-1 text-apricot-400 leading-none">Apricott Library</h1>
     <p class="text-sm text-zinc-400 mb-6">Sign in to continue.</p>
 
     <form

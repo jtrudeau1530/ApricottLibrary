@@ -17,13 +17,13 @@
 </script>
 
 <svelte:head>
-  <title>Apricot Library</title>
+  <title>Apricott Library</title>
 </svelte:head>
 
 <main class="min-h-screen">
   <header class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <h1 class="text-xl font-bold text-apricot-400">Apricot Library</h1>
+      <h1 class="font-wordmark text-3xl text-apricot-400 leading-none">Apricott Library</h1>
       {#if $queueCount > 0}
         <span class="text-xs px-2 py-0.5 rounded-full bg-apricot-900 text-apricot-200">
           {$queueCount} queued
@@ -32,11 +32,14 @@
     </div>
     <div class="flex items-center gap-3 text-sm">
       <a href="/playlists" class="text-zinc-400 hover:text-zinc-100">Playlists</a>
-      {#if data.user?.is_admin}
-        <a href="/admin" class="text-zinc-400 hover:text-zinc-100">Admin</a>
-      {/if}
       <span class="text-zinc-500">·</span>
-      <span class="text-zinc-400">{data.user?.username}</span>
+      <a
+        href={data.user?.is_admin ? '/admin' : undefined}
+        class="text-zinc-400 hover:text-zinc-100"
+        title={data.user?.is_admin ? 'Open admin' : ''}
+      >
+        {data.user?.username}
+      </a>
       <form method="post" action="/logout">
         <button type="submit" class="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5">
           Sign out

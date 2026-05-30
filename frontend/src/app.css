@@ -11,8 +11,20 @@
   --color-apricot-700: #c2410c;
   --color-apricot-800: #9a3412;
   --color-apricot-900: #7c2d12;
+
+  --font-body: 'Geo', system-ui, -apple-system, sans-serif;
+  --font-wordmark: 'Jersey 25', system-ui, sans-serif;
 }
 
 html, body {
   height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+}
+
+.font-wordmark {
+  font-family: var(--font-wordmark);
+  letter-spacing: 0.02em;
 }

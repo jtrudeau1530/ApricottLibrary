@@ -31,15 +31,18 @@ def has_cookies() -> bool:
 def _yt_dlp_common_opts() -> dict:
     """Options shared by every yt-dlp invocation in this module.
 
-    No explicit player_client override: yt-dlp picks clients per release as
-    YouTube changes their player API, and our pin-this-month combo was
-    surfacing 'Requested format is not available' across the board. Letting
-    the library default cascade choose tends to give the broadest matching
-    format list.
+    Player clients: ``tv_simply`` bypasses YouTube's SABR streaming path that
+    requires a PO Token (which our headless server can't easily mint).
+    ``web_safari`` is a fallback for the videos tv_simply can't reach.
+    Without this override yt-dlp's default cascade was returning zero formats
+    for bot-challenged videos even with cookies present.
     """
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["tv_simply", "web_safari", "mweb"]},
+        },
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"

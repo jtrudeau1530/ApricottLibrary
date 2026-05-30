@@ -32,6 +32,9 @@ def _normalize_track(item: dict) -> dict[str, Any]:
     runtime_ticks = item.get("RunTimeTicks") or 0
     duration_seconds = round(runtime_ticks / 10_000_000) if runtime_ticks else None
     artists = item.get("Artists") or []
+    if not artists:
+        album_artists = item.get("AlbumArtists") or []
+        artists = [a.get("Name") for a in album_artists if a.get("Name")]
     item_id = item.get("Id")
     album_id = item.get("AlbumId")
     has_track_image = bool((item.get("ImageTags") or {}).get("Primary"))
@@ -64,7 +67,7 @@ async def list_tracks(
     params: dict[str, Any] = {
         "IncludeItemTypes": "Audio",
         "Recursive": "true",
-        "Fields": "Artists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags",
+        "Fields": "Artists,AlbumArtists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags",
         "SortBy": sort_by,
         "SortOrder": "Descending" if descending else "Ascending",
         "Limit": limit,
@@ -93,7 +96,9 @@ _TRACK_FIELDS = (
     "RunTimeTicks,DateCreated,Overview,Path,"
     "Genres,Tags,ProductionYear,PremiereDate,IndexNumber,ParentIndexNumber,"
     "ImageTags,BackdropImageTags,AlbumPrimaryImageTag,"
-    "ArtistItems,AlbumArtists,ProviderIds"
+    "ArtistItems,AlbumArtists,ProviderIds,"
+    "ParentLogoItemId,ParentLogoImageTag,"
+    "ParentBackdropItemId,ParentBackdropImageTags"
 )
 
 
@@ -166,14 +171,35 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
         album_raw = await get_item(album_id, fields="Genres,Tags,ProductionYear,RunTimeTicks,ChildCount,Overview")
         album_tracks = await get_album_tracks(album_id)
 
+    # Resolve the artist id through every fallback Jellyfin gives us, since
+    # tagless OGGs leave ArtistItems empty even when Jellyfin inferred the artist
+    # from the folder structure.
     artist_item_id: str | None = None
-    artist_items = raw.get("ArtistItems") or raw.get("AlbumArtists") or []
-    if artist_items:
-        artist_item_id = artist_items[0].get("Id")
+    for items_field in ("ArtistItems", "AlbumArtists"):
+        items = raw.get(items_field) or []
+        if items:
+            artist_item_id = items[0].get("Id")
+            break
+    if not artist_item_id:
+        artist_item_id = (
+            raw.get("ParentBackdropItemId")
+            or raw.get("ParentLogoItemId")
+            or (album_raw or {}).get("ParentBackdropItemId")
+            or (album_raw or {}).get("ParentLogoItemId")
+        )
+    # If album exists, check its AlbumArtists too as a last resort.
+    if not artist_item_id and album_raw:
+        for items_field in ("AlbumArtists", "ArtistItems"):
+            items = album_raw.get(items_field) or []
+            if items:
+                artist_item_id = items[0].get("Id")
+                break
+
     artist_raw: dict[str, Any] | None = None
     if artist_item_id:
         artist_raw = await get_item(
-            artist_item_id, fields="Genres,Tags,BackdropImageTags,ImageTags,Overview,ProductionYear"
+            artist_item_id,
+            fields="Genres,Tags,BackdropImageTags,ImageTags,Overview,ProductionYear",
         )
 
     album_total_ticks = sum(t.get("RunTimeTicks") or 0 for t in album_tracks) if album_tracks else (
@@ -206,19 +232,32 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
         except (TypeError, ValueError):
             year = None
 
+    has_backdrop = bool(
+        ((artist_raw or {}).get("BackdropImageTags"))
+        or raw.get("ParentBackdropImageTags")
+    )
+    has_logo = bool(
+        ((artist_raw or {}).get("ImageTags") or {}).get("Logo")
+        or raw.get("ParentLogoImageTag")
+    )
     backdrop_url = (
-        f"/api/catalog/backdrop/{artist_item_id}"
-        if artist_item_id and (artist_raw or {}).get("BackdropImageTags")
-        else None
+        f"/api/catalog/backdrop/{artist_item_id}" if artist_item_id and has_backdrop else None
     )
-    logo_url = (
-        f"/api/catalog/logo/{artist_item_id}"
-        if artist_item_id and ((artist_raw or {}).get("ImageTags") or {}).get("Logo")
-        else None
-    )
-    cover_url_path = (
-        f"/api/catalog/cover/{album_id}?max_width=900" if album_id else track.get("album_art_url")
-    )
+    logo_url = f"/api/catalog/logo/{artist_item_id}" if artist_item_id and has_logo else None
+
+    cover_target = album_id
+    if not cover_target or not (album_raw or raw.get("AlbumPrimaryImageTag")):
+        cover_target = item_id
+    cover_url_path = f"/api/catalog/cover/{cover_target}?max_width=900" if cover_target else None
+
+    # Artist display name: track Artists → AlbumArtists → artist item Name → path inference.
+    artist_name = track["artist"]
+    if not artist_name:
+        album_artists = raw.get("AlbumArtists") or (album_raw or {}).get("AlbumArtists") or []
+        if album_artists:
+            artist_name = ", ".join(a.get("Name", "") for a in album_artists if a.get("Name"))
+    if not artist_name and artist_raw:
+        artist_name = artist_raw.get("Name") or ""
 
     sibling_tracks = [
         {
@@ -245,7 +284,7 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
         "track": {
             "id": track["id"],
             "title": track["title"],
-            "artist": track["artist"],
+            "artist": artist_name,
             "album": track["album"],
             "duration_seconds": track["duration_seconds"],
             "index": raw.get("IndexNumber"),
@@ -263,7 +302,7 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
         },
         "artist": {
             "id": artist_item_id,
-            "name": track["artist"],
+            "name": artist_name,
             "backdrop_url": backdrop_url,
             "logo_url": logo_url,
         },

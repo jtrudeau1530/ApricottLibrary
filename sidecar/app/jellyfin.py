@@ -80,6 +80,15 @@ async def list_tracks(
     }
 
 
+_TRACK_FIELDS = (
+    "Artists,AlbumArtist,AlbumArtists,Album,AlbumId,"
+    "RunTimeTicks,DateCreated,Overview,Path,"
+    "Genres,Tags,ProductionYear,PremiereDate,IndexNumber,ParentIndexNumber,"
+    "ImageTags,BackdropImageTags,AlbumPrimaryImageTag,"
+    "ArtistItems,AlbumArtists,ProviderIds"
+)
+
+
 async def get_track(item_id: str) -> dict[str, Any] | None:
     """Use /Items?Ids= (works without UserId scope, unlike /Items/{id} in 10.9+)."""
     url = f"{_base_url()}/Items"
@@ -87,7 +96,7 @@ async def get_track(item_id: str) -> dict[str, Any] | None:
         "Ids": item_id,
         "IncludeItemTypes": "Audio",
         "Recursive": "true",
-        "Fields": "Artists,Album,RunTimeTicks,DateCreated,Overview,Path",
+        "Fields": _TRACK_FIELDS,
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url, params=params, headers=_headers())
@@ -104,6 +113,156 @@ async def get_track(item_id: str) -> dict[str, Any] | None:
     normalized["path"] = raw.get("Path")
     normalized["_raw"] = raw
     return normalized
+
+
+async def get_item(item_id: str, fields: str = _TRACK_FIELDS) -> dict[str, Any] | None:
+    url = f"{_base_url()}/Items"
+    params = {"Ids": item_id, "Recursive": "true", "Fields": fields}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, params=params, headers=_headers())
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+    items = body.get("Items") or []
+    return items[0] if items else None
+
+
+async def get_album_tracks(album_id: str) -> list[dict[str, Any]]:
+    url = f"{_base_url()}/Items"
+    params = {
+        "ParentId": album_id,
+        "IncludeItemTypes": "Audio",
+        "Recursive": "true",
+        "SortBy": "ParentIndexNumber,IndexNumber,SortName",
+        "Fields": "RunTimeTicks,IndexNumber,ParentIndexNumber",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, params=params, headers=_headers())
+        if resp.status_code != 200:
+            return []
+        body = resp.json()
+    return body.get("Items") or []
+
+
+async def get_song_view(item_id: str) -> dict[str, Any] | None:
+    """Fully composed song-detail view: track + album + artist enrichment."""
+    track = await get_track(item_id)
+    if track is None:
+        return None
+    raw = track["_raw"]
+
+    album_id = raw.get("AlbumId")
+    album_raw: dict[str, Any] | None = None
+    album_tracks: list[dict[str, Any]] = []
+    if album_id:
+        album_raw = await get_item(album_id, fields="Genres,Tags,ProductionYear,RunTimeTicks,ChildCount,Overview")
+        album_tracks = await get_album_tracks(album_id)
+
+    artist_item_id: str | None = None
+    artist_items = raw.get("ArtistItems") or raw.get("AlbumArtists") or []
+    if artist_items:
+        artist_item_id = artist_items[0].get("Id")
+    artist_raw: dict[str, Any] | None = None
+    if artist_item_id:
+        artist_raw = await get_item(
+            artist_item_id, fields="Genres,Tags,BackdropImageTags,ImageTags,Overview,ProductionYear"
+        )
+
+    album_total_ticks = sum(t.get("RunTimeTicks") or 0 for t in album_tracks) if album_tracks else (
+        (album_raw or {}).get("RunTimeTicks") or 0
+    )
+    album_duration_seconds = round(album_total_ticks / 10_000_000) if album_total_ticks else None
+    track_count = (album_raw or {}).get("ChildCount") or len(album_tracks) or 1
+
+    genres = (album_raw or {}).get("Genres") or raw.get("Genres") or []
+    tags = list((album_raw or {}).get("Tags") or [])
+    provider_ids = (album_raw or {}).get("ProviderIds") or raw.get("ProviderIds") or {}
+    for key in provider_ids:
+        if key.lower() == "musicbrainzalbum":
+            tags.append("MusicBrainz Album")
+        elif key.lower() == "musicbrainzalbumartist":
+            tags.append("MusicBrainz Album Artist")
+        elif key.lower() == "musicbrainzreleasegroup":
+            tags.append("MusicBrainz Release Group")
+        elif key.lower() == "theaudiodbalbum":
+            tags.append("TheAudioDb Album")
+    # de-dup preserving order
+    seen: set[str] = set()
+    tags = [t for t in tags if not (t in seen or seen.add(t))]
+
+    year = (album_raw or {}).get("ProductionYear") or raw.get("ProductionYear")
+    premiere = raw.get("PremiereDate")
+    if not year and premiere:
+        try:
+            year = int(premiere[:4])
+        except (TypeError, ValueError):
+            year = None
+
+    backdrop_url = (
+        f"/api/catalog/backdrop/{artist_item_id}"
+        if artist_item_id and (artist_raw or {}).get("BackdropImageTags")
+        else None
+    )
+    logo_url = (
+        f"/api/catalog/logo/{artist_item_id}"
+        if artist_item_id and ((artist_raw or {}).get("ImageTags") or {}).get("Logo")
+        else None
+    )
+    cover_url_path = (
+        f"/api/catalog/cover/{album_id}?max_width=900" if album_id else track.get("album_art_url")
+    )
+
+    sibling_tracks = [
+        {
+            "id": t.get("Id"),
+            "title": t.get("Name") or "",
+            "index": t.get("IndexNumber"),
+            "disc": t.get("ParentIndexNumber"),
+            "duration_seconds": round((t.get("RunTimeTicks") or 0) / 10_000_000) if t.get("RunTimeTicks") else None,
+            "is_current": t.get("Id") == item_id,
+        }
+        for t in album_tracks
+    ] or [
+        {
+            "id": item_id,
+            "title": track["title"],
+            "index": raw.get("IndexNumber"),
+            "disc": raw.get("ParentIndexNumber"),
+            "duration_seconds": track["duration_seconds"],
+            "is_current": True,
+        }
+    ]
+
+    return {
+        "track": {
+            "id": track["id"],
+            "title": track["title"],
+            "artist": track["artist"],
+            "album": track["album"],
+            "duration_seconds": track["duration_seconds"],
+            "index": raw.get("IndexNumber"),
+            "disc": raw.get("ParentIndexNumber"),
+            "description": track["description"],
+        },
+        "album": {
+            "id": album_id,
+            "name": track["album"] or "Unknown album",
+            "track_count": track_count,
+            "duration_seconds": album_duration_seconds,
+            "year": year,
+            "cover_url": cover_url_path,
+            "description": (album_raw or {}).get("Overview") or "",
+        },
+        "artist": {
+            "id": artist_item_id,
+            "name": track["artist"],
+            "backdrop_url": backdrop_url,
+            "logo_url": logo_url,
+        },
+        "genres": genres,
+        "tags": tags,
+        "siblings": sibling_tracks,
+    }
 
 
 async def trigger_refresh() -> None:
@@ -132,6 +291,14 @@ async def update_metadata(item_id: str, payload: dict[str, Any]) -> bool:
 
 def cover_url(item_id: str, max_width: int = 300) -> str:
     return f"{_base_url()}/Items/{quote(item_id)}/Images/Primary?maxWidth={max_width}"
+
+
+def backdrop_url(item_id: str, max_width: int = 1600) -> str:
+    return f"{_base_url()}/Items/{quote(item_id)}/Images/Backdrop?maxWidth={max_width}"
+
+
+def logo_url(item_id: str, max_width: int = 800) -> str:
+    return f"{_base_url()}/Items/{quote(item_id)}/Images/Logo?maxWidth={max_width}"
 
 
 def audio_url(item_id: str) -> str:

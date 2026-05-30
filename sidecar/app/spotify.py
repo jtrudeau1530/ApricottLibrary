@@ -13,6 +13,7 @@ log = logging.getLogger("spotify")
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 SEARCH_URL = "https://api.spotify.com/v1/search"
 TRACK_URL = "https://api.spotify.com/v1/tracks/{id}"
+TRACKS_BATCH_URL = "https://api.spotify.com/v1/tracks"
 ME_PLAYLISTS_URL = "https://api.spotify.com/v1/me/playlists"
 PLAYLIST_URL = "https://api.spotify.com/v1/playlists/{id}"
 PLAYLIST_TRACKS_URL = "https://api.spotify.com/v1/playlists/{id}/tracks"
@@ -228,6 +229,47 @@ class SpotifyClient:
             )
         return out
 
+    async def get_tracks_batch(self, track_ids: list[str]) -> tuple[dict[str, dict], int | None, str]:
+        """Look up up to 50 tracks in a single Spotify call.
+
+        Returns (tracks_by_id, upstream_status, body_preview). On success
+        upstream_status is 200 and tracks_by_id is keyed by Spotify id; any id
+        Spotify returns null for (unavailable, removed) is simply absent.
+        On non-200 returns ({}, status, body_preview) without raising — callers
+        decide how to surface it.
+        """
+        if not track_ids:
+            return {}, 200, ""
+        if len(track_ids) > 50:
+            raise ValueError("Batch tracks lookup capped at 50 ids")
+        token = await self._bearer()
+        for attempt in range(2):
+            resp = await self._client.get(
+                TRACKS_BATCH_URL,
+                params={"ids": ",".join(track_ids), "market": "from_token"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 429 and attempt == 0:
+                wait = min(int(resp.headers.get("retry-after", "1") or "1"), 30)
+                log.warning("Spotify batch 429 — sleeping %ds", wait)
+                import asyncio as _asyncio
+                await _asyncio.sleep(wait + 1)
+                continue
+            if resp.status_code != 200:
+                log.warning(
+                    "Spotify batch tracks -> %s body=%s",
+                    resp.status_code, resp.text[:300],
+                )
+                return {}, resp.status_code, resp.text[:300]
+            items = resp.json().get("tracks") or []
+            out: dict[str, dict] = {}
+            for raw in items:
+                if not raw or not raw.get("id"):
+                    continue
+                out[raw["id"]] = _to_track(raw)
+            return out, 200, ""
+        return {}, 429, "rate-limited"
+
     async def get_track(self, track_id: str) -> dict | None:
         token = await self._bearer()
         # Retry once on 429 with the Retry-After hint. Spotify advertises the
@@ -247,9 +289,15 @@ class SpotifyClient:
                 await _asyncio.sleep(wait + 1)
                 continue
             if resp.status_code != 200:
+                # Propagate the actual upstream status so callers can distinguish
+                # 401 (token), 403 (scope/extended-quota), 5xx (Spotify side).
+                log.warning(
+                    "Spotify track lookup %s -> %s body=%s",
+                    track_id, resp.status_code, resp.text[:200],
+                )
                 raise HTTPException(
-                    status_code=502,
-                    detail=f"Spotify track lookup failed ({resp.status_code}): {resp.text[:200]}",
+                    status_code=resp.status_code,
+                    detail=f"Spotify /tracks/{track_id} returned {resp.status_code}: {resp.text[:200]}",
                 )
             return _to_track(resp.json())
         # Both attempts exhausted on 429.

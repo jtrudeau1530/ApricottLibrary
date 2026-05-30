@@ -67,7 +67,7 @@ async def debug_formats(
     }
 
 
-def _raw_formats(video_id: str) -> dict | None:
+def _raw_formats(video_id: str, *, use_cookies: bool = True, client: str | None = None) -> dict | None:
     import yt_dlp
 
     opts = {
@@ -75,8 +75,58 @@ def _raw_formats(video_id: str) -> dict | None:
         "skip_download": True,
         "ignoreerrors": False,
     }
+    if not use_cookies:
+        opts.pop("cookiefile", None)
+    if client:
+        opts["extractor_args"] = {"youtube": {"player_client": [client]}}
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+
+
+@router.get("/debug/matrix/{video_id}")
+async def debug_matrix(
+    video_id: str,
+    _user: User = Depends(require_session),
+) -> dict:
+    """Try every reasonable (cookies?, client) combo and report which one
+    actually returns formats. Helps pinpoint whether cookies are the problem,
+    a specific client is the problem, or the video really is PO-token-only.
+    """
+    combos: list[tuple[bool, str]] = [
+        (False, "web"),
+        (False, "tv_simply"),
+        (False, "mweb"),
+        (False, "ios"),
+        (True, "web"),
+        (True, "tv_simply"),
+        (True, "mweb"),
+        (True, "ios"),
+    ]
+    results: list[dict] = []
+    for use_cookies, client in combos:
+        try:
+            info = await asyncio.to_thread(_raw_formats, video_id, use_cookies=use_cookies, client=client)
+            formats = (info or {}).get("formats") or []
+            audio_only = [
+                f for f in formats
+                if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+            ]
+            results.append({
+                "cookies": use_cookies,
+                "client": client,
+                "ok": True,
+                "format_count": len(formats),
+                "audio_only_count": len(audio_only),
+                "title": (info or {}).get("title"),
+            })
+        except Exception as exc:
+            results.append({
+                "cookies": use_cookies,
+                "client": client,
+                "ok": False,
+                "error": str(exc)[:200],
+            })
+    return {"video_id": video_id, "cookies_uploaded": youtube.has_cookies(), "results": results}
 
 
 @router.get("/debug")

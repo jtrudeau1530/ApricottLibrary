@@ -22,8 +22,14 @@ def has_credentials() -> bool:
 
 
 def save_credentials(content: dict) -> None:
-    if not isinstance(content, dict) or "username" not in content or "credentials" not in content:
-        raise HTTPException(400, "Invalid credentials shape — expected JSON with 'username' and 'credentials' keys")
+    if not isinstance(content, dict) or "username" not in content:
+        raise HTTPException(400, "Invalid credentials shape — missing 'username'")
+    if "credentials" not in content and "auth_data" not in content:
+        raise HTTPException(
+            400,
+            "Invalid credentials shape — expected 'credentials' (librespot-python format) "
+            "or 'auth_data' + 'auth_type' (Rust librespot format)",
+        )
     path = credentials_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(content))

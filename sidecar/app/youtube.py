@@ -93,6 +93,22 @@ def parse_title(raw_title: str, channel: str) -> tuple[str, str]:
     return artist, title or raw_title
 
 
+def _normalize_playlist_url(url: str) -> str:
+    """Coerce any URL containing a ?list= param into a pure playlist URL.
+
+    A 'watch?v=X&list=Y' link enumerates only the single video, because
+    yt-dlp treats it as a video page (the playlist is just context). We
+    rewrite to 'youtube.com/playlist?list=Y' so it walks the whole list.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    if "list" in (qs := parse_qs(parsed.query)):
+        playlist_id = qs["list"][0]
+        return f"https://www.youtube.com/playlist?list={playlist_id}"
+    return url
+
+
 def enumerate_playlist(url: str) -> list[dict]:
     """Return [{video_id, title, channel, duration, thumbnail}] for the playlist.
 
@@ -101,6 +117,7 @@ def enumerate_playlist(url: str) -> list[dict]:
     """
     import yt_dlp
 
+    url = _normalize_playlist_url(url)
     opts = {
         **_yt_dlp_common_opts(),
         "extract_flat": "in_playlist",

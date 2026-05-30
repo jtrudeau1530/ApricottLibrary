@@ -283,28 +283,23 @@ async def paste_enqueue_resolved(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have fetch permission")
 
     track_ids = [t.id for t in body.tracks]
-    queued_set = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(FetchQueue.spotify_track_id).where(
-                    FetchQueue.spotify_track_id.in_(track_ids),
-                    FetchQueue.status.in_(["queued", "running"]),
-                )
+    q_rows = (
+        await db.execute(
+            select(FetchQueue.spotify_track_id).where(
+                FetchQueue.spotify_track_id.in_(track_ids),
+                FetchQueue.status.in_(["queued", "running"]),
             )
-        ).all()
-    }
-    library_set = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(SongMetadata.spotify_track_id).where(
-                    SongMetadata.spotify_track_id.in_(track_ids)
-                )
-            ).all()
         )
-        if r[0]
-    }
+    ).all()
+    queued_set = {r[0] for r in q_rows}
+    l_rows = (
+        await db.execute(
+            select(SongMetadata.spotify_track_id).where(
+                SongMetadata.spotify_track_id.in_(track_ids)
+            )
+        )
+    ).all()
+    library_set = {r[0] for r in l_rows if r[0]}
 
     enqueued = 0
     skipped_queued = 0
@@ -385,28 +380,23 @@ async def paste_import(
             f"Spotify failed to resolve any of {len(ids)} ids.",
         )
 
-    queued_set = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(FetchQueue.spotify_track_id).where(
-                    FetchQueue.spotify_track_id.in_(track_ids),
-                    FetchQueue.status.in_(["queued", "running"]),
-                )
+    q_rows = (
+        await db.execute(
+            select(FetchQueue.spotify_track_id).where(
+                FetchQueue.spotify_track_id.in_(track_ids),
+                FetchQueue.status.in_(["queued", "running"]),
             )
-        ).all()
-    }
-    library_set = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(SongMetadata.spotify_track_id).where(
-                    SongMetadata.spotify_track_id.in_(track_ids)
-                )
-            ).all()
         )
-        if r[0]
-    }
+    ).all()
+    queued_set = {r[0] for r in q_rows}
+    l_rows = (
+        await db.execute(
+            select(SongMetadata.spotify_track_id).where(
+                SongMetadata.spotify_track_id.in_(track_ids)
+            )
+        )
+    ).all()
+    library_set = {r[0] for r in l_rows if r[0]}
 
     enqueued = 0
     skipped_queued = 0
@@ -482,32 +472,26 @@ async def import_playlist(
     track_ids = [t["id"] for t in tracks if t.get("id")]
 
     queued_set: set[str] = set()
-    if track_ids:
-        queued_set = {
-            r[0]
-            for r in (
-                await db.execute(
-                    select(FetchQueue.spotify_track_id).where(
-                        FetchQueue.spotify_track_id.in_(track_ids),
-                        FetchQueue.status.in_(["queued", "running"]),
-                    )
-                )
-            ).all()
-        }
-
     library_set: set[str] = set()
     if track_ids:
-        library_set = {
-            r[0]
-            for r in (
-                await db.execute(
-                    select(SongMetadata.spotify_track_id).where(
-                        SongMetadata.spotify_track_id.in_(track_ids)
-                    )
-                ).all()
+        q_rows = (
+            await db.execute(
+                select(FetchQueue.spotify_track_id).where(
+                    FetchQueue.spotify_track_id.in_(track_ids),
+                    FetchQueue.status.in_(["queued", "running"]),
+                )
             )
-            if r[0]
-        }
+        ).all()
+        queued_set = {r[0] for r in q_rows}
+
+        l_rows = (
+            await db.execute(
+                select(SongMetadata.spotify_track_id).where(
+                    SongMetadata.spotify_track_id.in_(track_ids)
+                )
+            )
+        ).all()
+        library_set = {r[0] for r in l_rows if r[0]}
 
     enqueued = 0
     skipped_queued = 0

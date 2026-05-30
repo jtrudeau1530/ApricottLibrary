@@ -40,7 +40,16 @@
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`, {
         signal: controller.signal
       });
-      if (!res.ok) throw new Error(`Search failed (${res.status})`);
+      if (!res.ok) {
+        let detail = `Search failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body?.detail) detail = String(body.detail);
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail);
+      }
       const body = await res.json();
       results = (body.tracks || []) as SpotifyResult[];
     } catch (e: unknown) {

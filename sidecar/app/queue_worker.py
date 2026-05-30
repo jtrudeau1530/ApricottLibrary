@@ -137,6 +137,25 @@ def _write_ogg_tags(path: Path, title: str, artist: str, album: str) -> None:
         log.warning("Failed to write OGG tags on %s: %s", path, exc)
 
 
+async def _save_album_cover(album_dir: Path, cover_url: str | None) -> None:
+    """Save cover.jpg next to the audio file. Jellyfin auto-picks these up on scan."""
+    if not cover_url:
+        return
+    target = album_dir / "cover.jpg"
+    if target.exists():
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(cover_url)
+            if resp.status_code != 200:
+                log.warning("Cover fetch %s returned %s", cover_url, resp.status_code)
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(resp.content)
+    except Exception as exc:
+        log.warning("Cover save failed for %s: %s", album_dir, exc)
+
+
 async def _download_one(row: FetchQueue) -> None:
     log.info("Worker picked up %s — %s", row.id, row.track_name)
     await publish(
@@ -173,6 +192,8 @@ async def _download_one(row: FetchQueue) -> None:
         await asyncio.to_thread(
             _write_ogg_tags, output_path, row.track_name, row.artist_name, row.album_name or ""
         )
+        # Save album cover next to the file so Jellyfin picks it up as album art.
+        await _save_album_cover(output_path.parent, row.cover_url)
         await _mark_complete(row.id, output_path)
         await publish(
             "queue:complete",

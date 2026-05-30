@@ -81,24 +81,45 @@ def _get_session():
 
 
 def download_track(spotify_track_id: str, output_path: Path) -> Path:
-    """Stream a track via librespot and write OGG Vorbis bytes to output_path. Sync; run via to_thread."""
+    """Stream a track via librespot and write OGG Vorbis bytes to output_path. Sync; run via to_thread.
+
+    Retries once on 'Failed fetching audio key' — that error typically means the
+    Spotify session has degraded after rapid sequential downloads. Resetting and
+    rebuilding the session clears it.
+    """
     if not VALID_TRACK_ID.match(spotify_track_id):
         raise HTTPException(400, f"Invalid Spotify track id: {spotify_track_id!r}")
 
     from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
     from librespot.metadata import TrackId
 
-    session = _get_session()
     track_id = TrackId.from_uri(f"spotify:track:{spotify_track_id}")
-    stream = session.content_feeder().load(
-        track_id, VorbisOnlyAudioQuality(AudioQuality.VERY_HIGH), False, None
-    )
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("wb") as f:
-        while True:
-            chunk = stream.input_stream.stream().read(8192)
-            if not chunk:
-                break
-            f.write(chunk)
-    return output_path
+    last_err: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            session = _get_session()
+            stream = session.content_feeder().load(
+                track_id, VorbisOnlyAudioQuality(AudioQuality.VERY_HIGH), False, None
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open("wb") as f:
+                while True:
+                    chunk = stream.input_stream.stream().read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            return output_path
+        except Exception as exc:
+            last_err = exc
+            msg = str(exc).lower()
+            transient = "audio key" in msg or "fetching audio key" in msg or "aes key" in msg
+            if not transient or attempt == 3:
+                raise
+            log.warning(
+                "Audio-key fetch failed for %s on attempt %d (%s) — resetting session and retrying",
+                spotify_track_id, attempt, exc,
+            )
+            _reset_session()
+            time.sleep(2.0 * attempt)
+    # Unreachable — loop either returns or raises.
+    raise last_err if last_err else RuntimeError("download_track exited loop unexpectedly")

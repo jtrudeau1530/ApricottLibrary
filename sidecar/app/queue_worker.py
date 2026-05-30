@@ -21,6 +21,9 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9 _\-().,'&!]")
 _POLL_INTERVAL_SECONDS = 2.0
 _HEARTBEAT_INTERVAL_SECONDS = 5.0
 _STALE_RUNNING_AGE_SECONDS = 60
+# Brief pause between successful downloads — empirically the librespot session
+# degrades ("Failed fetching audio key") after many rapid back-to-back fetches.
+_INTER_TRACK_PAUSE_SECONDS = 1.5
 
 
 def _utc_now() -> datetime:
@@ -261,6 +264,7 @@ async def start_worker() -> None:
                 await asyncio.sleep(_POLL_INTERVAL_SECONDS)
                 continue
             await _download_one(row)
+            await asyncio.sleep(_INTER_TRACK_PAUSE_SECONDS)
         except asyncio.CancelledError:
             log.info("Queue worker stopping")
             raise

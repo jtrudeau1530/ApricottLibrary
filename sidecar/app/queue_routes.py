@@ -130,6 +130,30 @@ async def queue_history(
     return {"count": len(items), "items": [i.model_dump() for i in items]}
 
 
+@router.post("/retry-failed")
+async def retry_all_failed(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_session),
+) -> dict:
+    if not user.can_fetch:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have fetch permission")
+    result = await db.execute(select(FetchQueue).where(FetchQueue.status == "failed"))
+    rows = result.scalars().all()
+    if not rows:
+        return {"requeued": 0}
+    for row in rows:
+        row.status = "queued"
+        row.error_message = None
+        row.started_at = None
+        row.completed_at = None
+        row.heartbeat_at = None
+        row.progress = 0
+    await db.commit()
+    for row in rows:
+        await publish("queue:retry", {"id": row.id})
+    return {"requeued": len(rows)}
+
+
 @router.post("/{item_id}/retry")
 async def retry_queue_item(
     item_id: str,

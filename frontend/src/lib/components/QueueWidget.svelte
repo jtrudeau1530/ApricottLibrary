@@ -1,5 +1,25 @@
 <script lang="ts">
   import { queueItems } from '$lib/stores/sse';
+
+  let retrying = $state(false);
+  let retryError = $state<string | null>(null);
+  let failedCount = $derived($queueItems.filter((i) => i.status === 'failed').length);
+
+  async function retryAllFailed() {
+    retrying = true;
+    retryError = null;
+    try {
+      const res = await fetch('/api/queue/retry-failed', { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `Failed (${res.status})` }));
+        throw new Error(String(body.detail ?? `Failed (${res.status})`));
+      }
+    } catch (e) {
+      retryError = (e as Error).message;
+    } finally {
+      retrying = false;
+    }
+  }
 </script>
 
 <section class="rounded-2xl bg-zinc-900 p-5">
@@ -7,6 +27,23 @@
     Queue
     <span class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300">{$queueItems.length}</span>
   </h2>
+
+  {#if failedCount > 0}
+    <div class="mb-3 flex items-center justify-between gap-3 rounded-lg bg-zinc-950 px-3 py-2">
+      <span class="text-xs text-red-400">{failedCount} failed</span>
+      <button
+        type="button"
+        onclick={retryAllFailed}
+        disabled={retrying}
+        class="text-xs rounded-md bg-apricot-500 hover:bg-apricot-600 text-zinc-950 font-semibold px-3 py-1 disabled:opacity-50"
+      >
+        {retrying ? 'Retrying…' : `Retry all ${failedCount}`}
+      </button>
+    </div>
+    {#if retryError}
+      <p class="mb-2 text-xs text-red-400">{retryError}</p>
+    {/if}
+  {/if}
 
   {#if $queueItems.length === 0}
     <p class="text-sm text-zinc-500">Nothing queued. Search above to add tracks.</p>

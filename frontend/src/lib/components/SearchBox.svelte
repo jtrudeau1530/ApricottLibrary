@@ -37,7 +37,7 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`, {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=10`, {
         signal: controller.signal
       });
       if (!res.ok) {

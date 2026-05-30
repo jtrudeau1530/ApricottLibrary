@@ -23,6 +23,55 @@ log = logging.getLogger("youtube_routes")
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
 
 
+@router.get("/debug")
+async def debug_enumerate(
+    url: str,
+    _user: User = Depends(require_session),
+) -> dict:
+    """Diagnostic — runs yt-dlp against `url` and returns the raw extracted
+    payload plus the normalized URL we'll actually use. Helps figure out
+    whether yt-dlp can see the playlist at all (and if cookies are working).
+    """
+    normalized = youtube._normalize_playlist_url(url)
+    has_cookies = youtube.has_cookies()
+    info: dict | None = None
+    error_message: str | None = None
+    try:
+        info = await asyncio.to_thread(_raw_extract, normalized)
+    except Exception as exc:
+        error_message = repr(exc)
+
+    return {
+        "input_url": url,
+        "normalized_url": normalized,
+        "cookies_present": has_cookies,
+        "error": error_message,
+        "type": (info or {}).get("_type") if info else None,
+        "title": (info or {}).get("title") if info else None,
+        "entry_count": len((info or {}).get("entries") or []) if info else 0,
+        "first_entry_keys": (
+            list(((info or {}).get("entries") or [{}])[0].keys())
+            if info and info.get("entries")
+            else None
+        ),
+        "playlist_id": (info or {}).get("id") if info else None,
+        "uploader": (info or {}).get("uploader") if info else None,
+    }
+
+
+def _raw_extract(url: str) -> dict | None:
+    import yt_dlp
+
+    opts = {
+        **youtube._yt_dlp_common_opts(),
+        "extract_flat": "in_playlist",
+        "skip_download": True,
+        "ignoreerrors": False,  # surface errors so we see them
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
 class PlaylistRequest(BaseModel):
     url: str = Field(min_length=10, max_length=500)
 

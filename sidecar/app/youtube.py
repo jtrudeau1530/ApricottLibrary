@@ -128,8 +128,13 @@ def enumerate_playlist(url: str) -> list[dict]:
         info = ydl.extract_info(url, download=False)
 
     if not info:
+        log.warning("yt-dlp returned no info for %s", url)
         return []
     entries = info.get("entries") or []
+    log.info(
+        "yt-dlp enumerate %s: type=%s entries=%d title=%s",
+        url, info.get("_type"), len(entries), info.get("title"),
+    )
     out: list[dict] = []
     for e in entries:
         if not e or not e.get("id"):

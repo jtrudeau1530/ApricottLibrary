@@ -14,9 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import youtube
 from .db import get_db
-from .models import FetchQueue, SongMetadata, User
+from .models import FetchQueue, User
 from .sessions import require_session
-from .spotify import spotify
 from .sse_hub import publish
 
 log = logging.getLogger("youtube_routes")
@@ -34,58 +33,31 @@ class YoutubeResolvedTrack(BaseModel):
     artist_name: str
     album_name: str = ""
     cover_url: str | None = None
-    spotify_track_id: str | None = None
     youtube_title: str
-    matched: bool = False
 
 
 class YoutubeEnqueueRequest(BaseModel):
     tracks: list[YoutubeResolvedTrack] = Field(min_length=1, max_length=1000)
 
 
-async def _resolve_one(entry: dict) -> YoutubeResolvedTrack:
-    """For one YouTube entry, search Spotify for the best metadata match.
+def _resolve_one(entry: dict) -> YoutubeResolvedTrack:
+    """Parse a YouTube entry into a best-guess artist/track.
 
-    On a clean hit we use Spotify's name/artist/album/cover (so Jellyfin
-    treats the file identically to a librespot download). On no match we
-    fall back to the parsed YouTube title.
+    Pure local parse — no external metadata lookup. The queue worker does the
+    rich enrichment (MusicBrainz + Cover Art Archive) after download, so the
+    preview stays instant and we don't burn rate-limit budget on tracks the
+    user might never queue.
     """
     raw_title = entry.get("title") or ""
     channel = entry.get("channel") or ""
     artist_guess, track_guess = youtube.parse_title(raw_title, channel)
-
-    matched = False
-    spotify_id: str | None = None
-    name = track_guess
-    artist = artist_guess
-    album = ""
-    cover = entry.get("thumbnail")
-
-    if track_guess:
-        try:
-            query = f"{track_guess} {artist_guess}".strip()
-            tracks = await spotify.search_tracks(query, limit=1)
-            if tracks:
-                top = tracks[0]
-                spotify_id = top.get("id")
-                name = top.get("name") or name
-                if top.get("artists"):
-                    artist = top["artists"][0]
-                album = top.get("album") or ""
-                cover = top.get("cover_url") or cover
-                matched = True
-        except Exception as exc:  # pragma: no cover
-            log.debug("Spotify match failed for %s: %s", raw_title, exc)
-
     return YoutubeResolvedTrack(
         video_id=entry["video_id"],
-        track_name=name,
-        artist_name=artist,
-        album_name=album,
-        cover_url=cover,
-        spotify_track_id=spotify_id,
+        track_name=track_guess,
+        artist_name=artist_guess,
+        album_name="",
+        cover_url=entry.get("thumbnail"),
         youtube_title=raw_title,
-        matched=matched,
     )
 
 
@@ -108,15 +80,7 @@ async def preview_playlist(
             "Playlist has no videos (or is private / unavailable).",
         )
 
-    # Modest concurrency on Spotify search — /v1/search is a different bucket
-    # than /v1/tracks so we have plenty of headroom, but still play nice.
-    sem = asyncio.Semaphore(4)
-
-    async def _bound(e: dict) -> YoutubeResolvedTrack:
-        async with sem:
-            return await _resolve_one(e)
-
-    resolved = await asyncio.gather(*(_bound(e) for e in entries))
+    resolved = [_resolve_one(e) for e in entries]
 
     video_ids = [t.video_id for t in resolved]
     q_rows = (
@@ -130,35 +94,14 @@ async def preview_playlist(
     ).all()
     queued_set = {r[0] for r in q_rows}
 
-    spotify_ids = [t.spotify_track_id for t in resolved if t.spotify_track_id]
-    library_set: set[str] = set()
-    if spotify_ids:
-        l_rows = (
-            await db.execute(
-                select(SongMetadata.spotify_track_id).where(
-                    SongMetadata.spotify_track_id.in_(spotify_ids)
-                )
-            )
-        ).all()
-        library_set = {r[0] for r in l_rows if r[0]}
-
-    items = []
-    for t in resolved:
-        items.append(
-            {
-                **t.model_dump(),
-                "already_queued": t.video_id in queued_set,
-                "already_in_library": bool(
-                    t.spotify_track_id and t.spotify_track_id in library_set
-                ),
-            }
-        )
+    items = [
+        {**t.model_dump(), "already_queued": t.video_id in queued_set}
+        for t in resolved
+    ]
 
     return {
         "found": len(entries),
-        "matched": sum(1 for t in resolved if t.matched),
         "queued_count": sum(1 for it in items if it["already_queued"]),
-        "library_count": sum(1 for it in items if it["already_in_library"]),
         "tracks": items,
     }
 
@@ -184,26 +127,10 @@ async def import_resolved(
     ).all()
     queued_set = {r[0] for r in q_rows}
 
-    spotify_ids = [t.spotify_track_id for t in body.tracks if t.spotify_track_id]
-    library_set: set[str] = set()
-    if spotify_ids:
-        l_rows = (
-            await db.execute(
-                select(SongMetadata.spotify_track_id).where(
-                    SongMetadata.spotify_track_id.in_(spotify_ids)
-                )
-            )
-        ).all()
-        library_set = {r[0] for r in l_rows if r[0]}
-
     enqueued = 0
     skipped_queued = 0
-    skipped_library = 0
     new_rows: list[FetchQueue] = []
     for t in body.tracks:
-        if t.spotify_track_id and t.spotify_track_id in library_set:
-            skipped_library += 1
-            continue
         if t.video_id in queued_set:
             skipped_queued += 1
             continue
@@ -211,7 +138,7 @@ async def import_resolved(
             FetchQueue(
                 source="youtube",
                 source_id=t.video_id,
-                spotify_track_id=t.spotify_track_id,
+                spotify_track_id=None,
                 track_name=t.track_name or t.youtube_title or "Unknown",
                 artist_name=t.artist_name or "Unknown",
                 album_name=t.album_name or "",
@@ -252,5 +179,4 @@ async def import_resolved(
     return {
         "enqueued": enqueued,
         "skipped_queued": skipped_queued,
-        "skipped_library": skipped_library,
     }

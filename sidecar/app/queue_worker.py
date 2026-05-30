@@ -8,7 +8,7 @@ import httpx
 from mutagen.oggvorbis import OggVorbis
 from sqlalchemy import select, update  # noqa: F401
 
-from . import jellyfin, librespot_session, youtube
+from . import jellyfin, librespot_session, musicbrainz, youtube
 from .config import settings
 from .db import SessionLocal
 from .models import FetchQueue, SongMetadata
@@ -238,12 +238,49 @@ async def _download_one(row: FetchQueue) -> None:
             await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
         if heartbeat_task:
             heartbeat_task.cancel()
-        # librespot output has no Vorbis comments — write title/artist/album so Jellyfin tags correctly.
+
+        # For YouTube downloads only, enrich via MusicBrainz + Cover Art Archive
+        # after the file lands. Spotify-source rows already have clean metadata.
+        final_title = row.track_name
+        final_artist = row.artist_name
+        final_album = row.album_name or ""
+        final_cover = row.cover_url
+        if source == "youtube":
+            try:
+                enriched = await musicbrainz.enrich(row.artist_name, row.track_name)
+            except Exception as exc:  # pragma: no cover
+                log.warning("MusicBrainz enrich failed for %s: %s", row.id, exc)
+                enriched = None
+            if enriched:
+                final_artist = enriched.get("artist") or final_artist
+                final_album = enriched.get("album") or final_album
+                final_cover = enriched.get("cover_url") or final_cover
+                log.info(
+                    "Enriched %s: artist=%r album=%r cover=%s",
+                    row.id, final_artist, final_album, bool(enriched.get("cover_url")),
+                )
+            # Relocate the file under the enriched folder structure if it
+            # actually changed — Jellyfin's library scan keys off the path.
+            new_path = (
+                Path(settings.media_path)
+                / _safe(final_artist)
+                / _safe(final_album or "Unknown")
+                / f"{_safe(final_title)}.ogg"
+            )
+            if new_path != output_path:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.replace(new_path)
+                # Drop the now-empty old album/artist dirs if we left them empty.
+                for parent in (output_path.parent, output_path.parent.parent):
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                output_path = new_path
         await asyncio.to_thread(
-            _write_ogg_tags, output_path, row.track_name, row.artist_name, row.album_name or ""
+            _write_ogg_tags, output_path, final_title, final_artist, final_album
         )
-        # Save album cover next to the file so Jellyfin picks it up as album art.
-        await _save_album_cover(output_path.parent, row.cover_url)
+        await _save_album_cover(output_path.parent, final_cover)
         await _mark_complete(row.id, output_path)
         # Best-effort: record spotify_track_id → jellyfin_item_id once Jellyfin sees it.
         asyncio.create_task(_record_spotify_mapping(row, output_path))

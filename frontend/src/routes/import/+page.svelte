@@ -140,27 +140,22 @@
     artist_name: string;
     album_name: string;
     cover_url: string | null;
-    spotify_track_id: string | null;
     youtube_title: string;
-    matched: boolean;
     already_queued: boolean;
-    already_in_library: boolean;
   };
   let ytUrl = $state('');
   let ytLoading = $state(false);
   let ytError = $state<string | null>(null);
   let ytPreview = $state<{
     found: number;
-    matched: number;
     queued_count: number;
-    library_count: number;
     tracks: YoutubeResolvedTrack[];
   } | null>(null);
   let ytImporting = $state(false);
-  let ytResult = $state<{ enqueued: number; skipped_queued: number; skipped_library: number } | null>(null);
+  let ytResult = $state<{ enqueued: number; skipped_queued: number } | null>(null);
 
   let ytWillEnqueue = $derived(
-    ytPreview ? ytPreview.tracks.filter((t) => !t.already_queued && !t.already_in_library).length : 0
+    ytPreview ? ytPreview.tracks.filter((t) => !t.already_queued).length : 0
   );
 
   async function previewYoutube() {
@@ -193,16 +188,14 @@
     ytError = null;
     try {
       const tracks = ytPreview.tracks
-        .filter((t) => !t.already_queued && !t.already_in_library)
+        .filter((t) => !t.already_queued)
         .map((t) => ({
           video_id: t.video_id,
           track_name: t.track_name,
           artist_name: t.artist_name,
           album_name: t.album_name,
           cover_url: t.cover_url,
-          spotify_track_id: t.spotify_track_id,
-          youtube_title: t.youtube_title,
-          matched: t.matched
+          youtube_title: t.youtube_title
         }));
       const res = await fetch('/api/youtube/import', {
         method: 'POST',
@@ -387,8 +380,9 @@
   <section class="rounded-2xl bg-zinc-900 p-5 mb-6">
     <h2 class="font-semibold mb-1">Import a YouTube playlist</h2>
     <p class="text-xs text-zinc-500 mb-3">
-      Paste a YouTube playlist URL. We download the audio from YouTube (no Spotify rate limit)
-      and pull clean metadata from Spotify search so Jellyfin treats them just like any other track.
+      Paste a YouTube playlist URL. We download the audio straight from each video in the playlist
+      (no Spotify involved). After each download lands we look the track up on MusicBrainz to get
+      a real album, year, genre, and cover image — works even for songs that aren't on Spotify.
     </p>
     <input
       type="url"
@@ -411,10 +405,6 @@
           <span class="mx-2 text-zinc-600">·</span>
           <span class="text-apricot-400">{ytWillEnqueue} new</span>
           <span class="mx-2 text-zinc-600">·</span>
-          {ytPreview.matched} matched on Spotify
-          <span class="mx-2 text-zinc-600">·</span>
-          {ytPreview.library_count} in library
-          <span class="mx-2 text-zinc-600">·</span>
           {ytPreview.queued_count} already queued
         </span>
         <button
@@ -434,8 +424,8 @@
     {#if ytResult}
       <div class="mt-3 rounded-lg border border-apricot-500/40 bg-apricot-900/20 px-4 py-3 text-sm">
         <strong>Done.</strong>
-        Enqueued {ytResult.enqueued}, skipped {ytResult.skipped_library} in library,
-        skipped {ytResult.skipped_queued} already queued.
+        Enqueued {ytResult.enqueued}, skipped {ytResult.skipped_queued} already queued.
+        MusicBrainz enrichment runs as each track downloads.
       </div>
     {/if}
 
@@ -450,14 +440,9 @@
             {/if}
             <div class="flex-1 min-w-0">
               <p class="truncate text-sm">{t.track_name}</p>
-              <p class="truncate text-xs text-zinc-500">
-                {t.artist_name}
-                {#if !t.matched}<span class="ml-1 text-zinc-600">· no Spotify match</span>{/if}
-              </p>
+              <p class="truncate text-xs text-zinc-500">{t.artist_name}</p>
             </div>
-            {#if t.already_in_library}
-              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">In library</span>
-            {:else if t.already_queued}
+            {#if t.already_queued}
               <span class="text-xs px-2 py-0.5 rounded bg-apricot-900 text-apricot-200">Queued</span>
             {:else}
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-500">New</span>

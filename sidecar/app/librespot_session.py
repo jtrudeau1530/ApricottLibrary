@@ -1,11 +1,15 @@
 import json
+import logging
 import re
+import time
 from pathlib import Path
 from threading import Lock
 
 from fastapi import HTTPException
 
 from .config import settings
+
+log = logging.getLogger("librespot_session")
 
 _session_lock = Lock()
 _session = None
@@ -43,7 +47,9 @@ def _reset_session() -> None:
 
 
 def _get_session():
-    """Return a librespot Session, building it lazily from credentials.json."""
+    """Return a librespot Session, building it lazily from credentials.json. Retries
+    on transient AP connection failures (Spotify's ApResolver sometimes hands back
+    an unreachable address)."""
     global _session
     with _session_lock:
         if _session is not None:
@@ -53,10 +59,25 @@ def _get_session():
                 401,
                 "librespot credentials not present. POST /auth/librespot/credentials with your credentials.json.",
             )
-        from librespot.core import Session  # imported lazily — librespot pulls heavy deps
+        from librespot.core import Session
 
-        _session = Session.Builder().stored_file(str(credentials_path())).create()
-        return _session
+        last_err: Exception | None = None
+        for attempt in range(1, 6):
+            try:
+                _session = Session.Builder().stored_file(str(credentials_path())).create()
+                if attempt > 1:
+                    log.info("librespot session ok on attempt %d", attempt)
+                return _session
+            except (ConnectionRefusedError, ConnectionError, OSError) as e:
+                last_err = e
+                log.warning("librespot session attempt %d failed: %s", attempt, e)
+                time.sleep(0.5 * attempt)
+        raise HTTPException(
+            502,
+            f"Could not connect to any Spotify access point after 5 attempts. "
+            f"Last error: {last_err!r}. If this is persistent, the Coolify host "
+            f"may be blocking outbound port 4070.",
+        )
 
 
 def download_track(spotify_track_id: str, output_path: Path) -> Path:

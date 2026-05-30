@@ -196,13 +196,7 @@ class SpotifyClient:
         log.info("Falling back to embedded-tracks read for playlist %s", playlist_id)
         meta = await self._client.get(
             PLAYLIST_URL.format(id=playlist_id),
-            params={
-                "fields": (
-                    "tracks(items(track(id,name,artists,album(name,images),"
-                    "duration_ms,explicit,external_ids,external_urls,is_local)))"
-                ),
-                "market": "from_token",
-            },
+            params={"market": "from_token"},
             headers=headers,
         )
         if meta.status_code != 200:
@@ -211,12 +205,27 @@ class SpotifyClient:
                 detail=f"Spotify playlist embed read failed ({meta.status_code}): {meta.text[:200]}",
             )
         body = meta.json()
-        items = (body.get("tracks") or {}).get("items") or []
+        tracks_block = body.get("tracks") or {}
+        items = tracks_block.get("items") or []
+        log.info(
+            "Embed fallback for %s: %d items present, total=%s, next=%s",
+            playlist_id, len(items), tracks_block.get("total"), bool(tracks_block.get("next")),
+        )
         for entry in items:
             tr = entry.get("track") or {}
             if not tr or tr.get("is_local") or not tr.get("id"):
                 continue
             out.append(_to_track(tr))
+        if not out:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Spotify returned a playlist with no readable tracks. "
+                    f"items_in_response={len(items)}, total={tracks_block.get('total')}. "
+                    "Most likely your Spotify app is in Development Mode without Extended Quota. "
+                    "Apply for Extended Quota in the Spotify dashboard."
+                ),
+            )
         return out
 
     async def get_track(self, track_id: str) -> dict | None:

@@ -36,14 +36,25 @@ async def debug_playlist(
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     out: dict = {}
     async with _httpx.AsyncClient(timeout=10.0) as client:
-        # 1) Playlist metadata
+        # 1) Playlist metadata — full body so we can inspect tracks.items
         meta = await client.get(
-            f"https://api.spotify.com/v1/playlists/{playlist_id}", headers=headers
+            f"https://api.spotify.com/v1/playlists/{playlist_id}",
+            params={"market": "from_token"},
+            headers=headers,
         )
+        meta_json = meta.json() if meta.status_code == 200 else None
+        tracks_block = (meta_json or {}).get("tracks") or {}
+        items = tracks_block.get("items") or []
         out["meta"] = {
             "status": meta.status_code,
-            "body": meta.text[:400],
-            "owner": (meta.json().get("owner") if meta.status_code == 200 else None),
+            "owner": (meta_json or {}).get("owner"),
+            "track_total": tracks_block.get("total"),
+            "items_in_response": len(items),
+            "first_item_keys": list(items[0].keys()) if items else None,
+            "first_item_track_id": ((items[0] or {}).get("track") or {}).get("id") if items else None,
+            "first_item_track_name": ((items[0] or {}).get("track") or {}).get("name") if items else None,
+            "tracks_next": tracks_block.get("next"),
+            "body_preview": meta.text[:600],
         }
         # 2) Tracks with market=from_token (what we currently use)
         t1 = await client.get(

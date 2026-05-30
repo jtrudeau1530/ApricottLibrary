@@ -53,6 +53,7 @@
     queued_count: number;
     library_count: number;
     tracks: PlaylistTrack[];
+    error_counts?: Record<string, number>;
   } | null>(null);
   let pasteLoading = $state(false);
   let pasteError = $state<string | null>(null);
@@ -227,7 +228,16 @@
           {pastePreview.queued_count} already queued
           {#if pastePreview.missing_ids.length > 0}
             <span class="mx-2 text-zinc-600">·</span>
-            <span class="text-red-400">{pastePreview.missing_ids.length} unresolved</span>
+            <span class="text-red-400">
+              {pastePreview.missing_ids.length} unresolved
+              {#if pastePreview.error_counts?.['429']}
+                (Spotify rate-limited {pastePreview.error_counts['429']} — wait a minute, then Preview again)
+              {:else if pastePreview.error_counts && Object.keys(pastePreview.error_counts).length > 0}
+                ({Object.entries(pastePreview.error_counts)
+                  .map(([k, v]) => `${v}×${k}`)
+                  .join(', ')})
+              {/if}
+            </span>
           {/if}
         </span>
         <button

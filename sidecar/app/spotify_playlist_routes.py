@@ -182,24 +182,40 @@ class EnqueueResolvedRequest(BaseModel):
     tracks: list[ResolvedTrack] = Field(min_length=1, max_length=1000)
 
 
-async def _resolve_tracks(track_ids: list[str]) -> tuple[list[dict], list[str]]:
-    """Resolve track metadata for each ID via Spotify. Returns (tracks, missing_ids)."""
+async def _resolve_tracks(
+    track_ids: list[str],
+) -> tuple[list[dict], list[str], dict[str, int]]:
+    """Resolve track metadata for each ID via Spotify.
+
+    Returns (tracks, missing_ids, error_counts) where error_counts maps a short
+    error label (e.g. ``"429"``, ``"404"``, ``"502"``) to how many IDs hit it.
+    """
     results: list[dict] = []
     missing: list[str] = []
+    error_counts: dict[str, int] = {}
+
+    def _bump(label: str) -> None:
+        error_counts[label] = error_counts.get(label, 0) + 1
 
     async def _one(tid: str) -> None:
         try:
             tr = await spotify.get_track(tid)
             if tr is None:
                 missing.append(tid)
+                _bump("404")
             else:
                 results.append(tr)
+        except HTTPException as exc:
+            log.warning("Failed to resolve %s: %s %s", tid, exc.status_code, exc.detail)
+            missing.append(tid)
+            _bump(str(exc.status_code))
         except Exception as exc:  # pragma: no cover
             log.warning("Failed to resolve %s: %s", tid, exc)
             missing.append(tid)
+            _bump("exception")
 
-    # Modest concurrency to avoid Spotify rate-limiting.
-    sem = asyncio.Semaphore(5)
+    # Lower concurrency than before — Spotify rate-limits aggressively on bursts.
+    sem = asyncio.Semaphore(3)
 
     async def _bound(tid: str) -> None:
         async with sem:
@@ -209,7 +225,7 @@ async def _resolve_tracks(track_ids: list[str]) -> tuple[list[dict], list[str]]:
     # Preserve input order.
     by_id = {t["id"]: t for t in results}
     ordered = [by_id[t] for t in track_ids if t in by_id]
-    return ordered, missing
+    return ordered, missing, error_counts
 
 
 @paste_router.post("/preview")
@@ -226,9 +242,10 @@ async def paste_preview(
             "missing_ids": [],
             "queued_count": 0,
             "library_count": 0,
+            "error_counts": {},
         }
 
-    tracks, missing = await _resolve_tracks(ids)
+    tracks, missing, error_counts = await _resolve_tracks(ids)
     resolved_ids = [t["id"] for t in tracks]
 
     queued_set: set[str] = set()
@@ -268,6 +285,7 @@ async def paste_preview(
         "queued_count": sum(1 for t in annotated if t["already_queued"]),
         "library_count": sum(1 for t in annotated if t["already_in_library"]),
         "tracks": annotated,
+        "error_counts": error_counts,
     }
 
 
@@ -372,7 +390,7 @@ async def paste_import(
             "No Spotify track IDs found. Paste track URLs, URIs, or CSV from Exportify.",
         )
 
-    tracks, missing = await _resolve_tracks(ids)
+    tracks, missing, _error_counts = await _resolve_tracks(ids)
     track_ids = [t["id"] for t in tracks]
     if not track_ids:
         raise HTTPException(

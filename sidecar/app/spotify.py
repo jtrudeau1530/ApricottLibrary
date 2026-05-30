@@ -230,18 +230,33 @@ class SpotifyClient:
 
     async def get_track(self, track_id: str) -> dict | None:
         token = await self._bearer()
-        resp = await self._client.get(
-            TRACK_URL.format(id=track_id),
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if resp.status_code == 404:
-            return None
-        if resp.status_code != 200:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Spotify track lookup failed ({resp.status_code}): {resp.text[:200]}",
+        # Retry once on 429 with the Retry-After hint. Spotify advertises the
+        # cool-off in seconds; cap at 30s so a single bad batch doesn't stall
+        # the whole import.
+        for attempt in range(2):
+            resp = await self._client.get(
+                TRACK_URL.format(id=track_id),
+                headers={"Authorization": f"Bearer {token}"},
             )
-        return _to_track(resp.json())
+            if resp.status_code == 404:
+                return None
+            if resp.status_code == 429 and attempt == 0:
+                wait = min(int(resp.headers.get("retry-after", "1") or "1"), 30)
+                log.warning("Spotify 429 for %s — sleeping %ds", track_id, wait)
+                import asyncio as _asyncio
+                await _asyncio.sleep(wait + 1)
+                continue
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Spotify track lookup failed ({resp.status_code}): {resp.text[:200]}",
+                )
+            return _to_track(resp.json())
+        # Both attempts exhausted on 429.
+        raise HTTPException(
+            status_code=429,
+            detail="Spotify rate-limited the track lookup. Wait a minute and retry.",
+        )
 
 
 def _to_playlist(item: dict) -> dict:

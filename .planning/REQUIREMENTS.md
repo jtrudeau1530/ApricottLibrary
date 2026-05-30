@@ -129,13 +129,62 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmapper) | — | Pending |
+| AUTH-01 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Pending |
+| AUTH-03 | Phase 1 | Pending |
+| AUTH-04 | Phase 1 | Pending |
+| AUTH-05 | Phase 1 | Pending |
+| AUTH-06 | Phase 1 | Pending |
+| ADMIN-01 | Phase 1 | Pending |
+| QUEUE-01 | Phase 2 | Pending |
+| QUEUE-02 | Phase 2 | Pending |
+| QUEUE-03 | Phase 2 | Pending |
+| QUEUE-04 | Phase 2 | Pending |
+| QUEUE-05 | Phase 2 | Pending |
+| QUEUE-06 | Phase 2 | Pending |
+| QUEUE-07 | Phase 2 | Pending |
+| QUEUE-08 | Phase 2 | Pending |
+| RT-01 | Phase 2 | Pending |
+| RT-02 | Phase 2 | Pending |
+| RT-03 | Phase 2 | Pending |
+| RT-04 | Phase 2 | Pending |
+| RT-05 | Phase 2 | Pending |
+| CAT-01 | Phase 3 | Pending |
+| CAT-02 | Phase 3 | Pending |
+| CAT-03 | Phase 3 | Pending |
+| CAT-04 | Phase 3 | Pending |
+| CAT-05 | Phase 3 | Pending |
+| STOR-01 | Phase 3 | Pending |
+| STOR-02 | Phase 3 | Pending |
+| SRCH-01 | Phase 4 | Pending |
+| SRCH-02 | Phase 4 | Pending |
+| SRCH-03 | Phase 4 | Pending |
+| SRCH-04 | Phase 4 | Pending |
+| SRCH-05 | Phase 4 | Pending |
+| SONG-01 | Phase 5 | Pending |
+| SONG-02 | Phase 5 | Pending |
+| SONG-03 | Phase 5 | Pending |
+| SONG-04 | Phase 5 | Pending |
+| META-01 | Phase 5 | Pending |
+| META-02 | Phase 5 | Pending |
+| META-03 | Phase 5 | Pending |
+| META-04 | Phase 5 | Pending |
+| PLST-01 | Phase 6 | Pending |
+| PLST-02 | Phase 6 | Pending |
+| PLST-03 | Phase 6 | Pending |
+| PLST-04 | Phase 6 | Pending |
+| PLST-05 | Phase 6 | Pending |
+| ADMIN-02 | Phase 6 | Pending |
+| ADMIN-03 | Phase 6 | Pending |
+| ADMIN-04 | Phase 6 | Pending |
+| ADMIN-05 | Phase 6 | Pending |
+| ADMIN-06 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 53 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 53 ⚠️ (will resolve in next step)
+- v1 requirements: 50 mapped (header previously said 53 — recount confirmed 50 actual requirements in the file; no orphans found)
+- Mapped to phases: 50/50
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-29*
-*Last updated: 2026-05-29 after initial definition*
+*Last updated: 2026-05-29 after roadmap creation*

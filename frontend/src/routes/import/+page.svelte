@@ -7,6 +7,10 @@
     cover_url: string | null;
   };
 
+  function isSpotifyCurated(owner: string): boolean {
+    return owner.toLowerCase() === 'spotify';
+  }
+
   type PlaylistTrack = {
     id: string;
     name: string;
@@ -134,7 +138,12 @@
                 <div class="w-12 h-12 rounded bg-zinc-800"></div>
               {/if}
               <div class="flex-1 min-w-0">
-                <p class="truncate font-medium">{p.name}</p>
+                <p class="truncate font-medium">
+                  {p.name}
+                  {#if isSpotifyCurated(p.owner)}
+                    <span class="ml-2 text-[10px] uppercase tracking-wide text-zinc-500">Spotify · not importable</span>
+                  {/if}
+                </p>
                 <p class="truncate text-xs text-zinc-500">
                   {p.owner}{p.track_count !== null ? ` · ${p.track_count} tracks` : ''}
                 </p>

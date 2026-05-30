@@ -165,6 +165,15 @@ class SpotifyClient:
                 params=params,
                 headers={"Authorization": f"Bearer {token}"},
             )
+            if resp.status_code == 403:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Spotify refused this playlist's tracks (403). "
+                        "Spotify-curated playlists (Discover Weekly, Daily Mix, Release Radar, "
+                        "Made For You, etc.) cannot be imported via the API. Try a playlist you created."
+                    ),
+                )
             if resp.status_code != 200:
                 raise HTTPException(
                     status_code=502,

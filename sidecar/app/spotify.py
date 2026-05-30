@@ -47,27 +47,52 @@ class SpotifyClient:
 
     async def search_tracks(self, query: str, limit: int = 20) -> list[dict]:
         token = await self._get_token()
-        # Build URL manually so the integer limit is unambiguous and ordered.
         safe_limit = max(1, min(int(limit), 50))
-        query_string = urlencode(
-            [("q", query), ("type", "track"), ("limit", str(safe_limit))]
-        )
-        url = f"{SEARCH_URL}?{query_string}"
         resp = await self._client.get(
-            url,
+            SEARCH_URL,
+            params={"q": query, "type": "track", "limit": str(safe_limit)},
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
             },
         )
         if resp.status_code != 200:
-            log.warning("Spotify search %s returned %s: %s", url, resp.status_code, resp.text[:300])
+            log.warning(
+                "Spotify search url=%s status=%s body=%s",
+                resp.request.url, resp.status_code, resp.text[:300],
+            )
             raise HTTPException(
                 status_code=502,
-                detail=f"Spotify search failed ({resp.status_code}): {resp.text[:200]}",
+                detail=(
+                    f"Spotify search failed ({resp.status_code}); "
+                    f"sent_url={resp.request.url}; body={resp.text[:200]}"
+                ),
             )
         items = resp.json().get("tracks", {}).get("items", [])
         return [_to_track(item) for item in items]
+
+    async def debug_search(self, query: str, limit: int = 20) -> dict:
+        """Diagnostic — returns the literal URL we built + Spotify's full response."""
+        token = await self._get_token()
+        safe_limit = max(1, min(int(limit), 50))
+        resp = await self._client.get(
+            SEARCH_URL,
+            params={"q": query, "type": "track", "limit": str(safe_limit)},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+        return {
+            "sent_url": str(resp.request.url),
+            "sent_headers": dict(resp.request.headers),
+            "status_code": resp.status_code,
+            "response_headers": dict(resp.headers),
+            "body": resp.text[:1000],
+            "token_prefix": (token or "")[:12] + "…",
+            "client_id_set": bool(settings.spotify_client_id),
+            "client_secret_set": bool(settings.spotify_client_secret),
+        }
 
     async def get_track(self, track_id: str) -> dict | None:
         token = await self._get_token()

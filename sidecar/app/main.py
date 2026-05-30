@@ -131,4 +131,14 @@ async def storage(_user: User = Depends(require_session)) -> dict:
     return await asyncio.to_thread(compute_storage_snapshot, settings.media_path)
 
 
+@api_router.get("/debug/spotify-search")
+async def debug_spotify_search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=50),
+    _user: User = Depends(require_session),
+) -> dict:
+    """Exposes the full Spotify request/response so we can see what's being rejected."""
+    return await spotify.debug_search(q, limit=limit)
+
+
 app.include_router(api_router)

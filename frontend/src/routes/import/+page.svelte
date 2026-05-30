@@ -19,6 +19,7 @@
 
   let { data } = $props();
   let playlists = $derived(data.playlists as Playlist[]);
+  let loadError = $derived(data.error as string | null);
 
   let selected = $state<Playlist | null>(null);
   let preview = $state<{
@@ -107,6 +108,16 @@
         Your playlists
         <span class="text-xs text-zinc-500">{data.total}</span>
       </h2>
+      {#if loadError}
+        <div class="px-5 py-4 text-sm text-red-400 border-b border-zinc-800">
+          {loadError}
+          <p class="mt-2 text-zinc-400">
+            Reconnect Spotify at
+            <a href="/api/auth/spotify/login" class="text-apricot-400 underline">/api/auth/spotify/login</a>
+            to grant the new playlist-read scope.
+          </p>
+        </div>
+      {/if}
       <ul class="divide-y divide-zinc-800 max-h-[70vh] overflow-y-auto">
         {#each playlists as p (p.id)}
           <li>

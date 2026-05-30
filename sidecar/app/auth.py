@@ -15,7 +15,7 @@ router = APIRouter(prefix="/auth/spotify", tags=["auth"])
 
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
-SCOPES = "streaming user-read-private user-read-email"
+SCOPES = "streaming user-read-private user-read-email playlist-read-private playlist-read-collaborative"
 STATE_TTL_SECONDS = 600
 
 _pending_states: dict[str, float] = {}

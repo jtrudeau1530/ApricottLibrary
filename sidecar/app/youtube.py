@@ -42,14 +42,11 @@ def _yt_dlp_common_opts() -> dict:
         "quiet": True,
         "no_warnings": True,
         "extractor_args": {
-            # YouTube is forcing SABR streaming on web/web_safari/mweb even
-            # with valid PO tokens (yt-dlp issue #12482), stripping the audio
-            # URLs out — only image storyboards come back. The 'tv' client
-            # uses a separate API path that still serves signed HTTPS audio
-            # URLs. 'ios' is a fallback in case 'tv' rejects a specific video.
-            # 'web' is kept last so we still get the PoT plugin engaged
-            # whenever the tv path fails over.
-            "youtube": {"player_client": ["tv", "ios", "web"]},
+            # tv_embedded uses YouTube's smart-TV API path and accepts the
+            # web cookies file we have. It's documented in the bgutil-pot
+            # README as the most reliable client for PoT-based extraction.
+            # Falling back to tv (no embedded) and ios.
+            "youtube": {"player_client": ["tv_embedded", "tv", "ios"]},
             "youtubepot-bgutilhttp": {"base_url": [settings.bgutil_pot_url]},
         },
         "user_agent": (

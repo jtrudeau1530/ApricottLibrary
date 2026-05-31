@@ -83,6 +83,64 @@ def _raw_formats(video_id: str, *, use_cookies: bool = True, client: str | None 
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
 
 
+@router.get("/debug/pot")
+async def debug_pot(_user: User = Depends(require_session)) -> dict:
+    """Health-check the bgutil-pot-provider sidecar service + show which
+    yt-dlp plugins (specifically the PoT provider) are actually loaded.
+    """
+    import importlib
+    import httpx
+    from .config import settings as _settings
+
+    pot_url = _settings.bgutil_pot_url
+    ping: dict = {"url": pot_url}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{pot_url}/ping")
+            ping["status_code"] = resp.status_code
+            ping["body"] = resp.text[:300]
+    except Exception as exc:
+        ping["error"] = str(exc)[:200]
+
+    plugin_info: dict = {}
+    try:
+        mod = importlib.import_module("bgutil_ytdlp_pot_provider")
+        plugin_info["import_ok"] = True
+        plugin_info["version"] = getattr(mod, "__version__", "unknown")
+        plugin_info["path"] = getattr(mod, "__file__", None)
+    except Exception as exc:
+        plugin_info["import_ok"] = False
+        plugin_info["error"] = str(exc)[:200]
+
+    yt_dlp_plugins: list[str] = []
+    try:
+        from yt_dlp.plugins import directories  # type: ignore
+        yt_dlp_plugins.append(f"plugin_dirs={list(directories())}")
+    except Exception as exc:
+        yt_dlp_plugins.append(f"directories error: {exc}")
+    try:
+        from yt_dlp.utils._utils import bug_reports_message  # noqa: F401
+        import yt_dlp
+        yt_dlp_plugins.append(f"yt_dlp version={yt_dlp.version.__version__}")
+    except Exception as exc:
+        yt_dlp_plugins.append(f"version probe error: {exc}")
+
+    # Also try to enumerate registered PoT providers (if the framework exists)
+    pot_providers: list[str] = []
+    try:
+        from yt_dlp.extractor.youtube.pot._registry import _ptp_registry  # type: ignore
+        pot_providers = [str(p) for p in _ptp_registry]
+    except Exception as exc:
+        pot_providers.append(f"registry probe error: {exc}")
+
+    return {
+        "ping": ping,
+        "plugin_info": plugin_info,
+        "yt_dlp_info": yt_dlp_plugins,
+        "registered_pot_providers": pot_providers,
+    }
+
+
 @router.get("/debug/matrix/{video_id}")
 async def debug_matrix(
     video_id: str,

@@ -42,11 +42,10 @@ def _yt_dlp_common_opts() -> dict:
         "quiet": True,
         "no_warnings": True,
         "extractor_args": {
-            # tv_embedded uses YouTube's smart-TV API path and accepts the
-            # web cookies file we have. It's documented in the bgutil-pot
-            # README as the most reliable client for PoT-based extraction.
-            # Falling back to tv (no embedded) and ios.
-            "youtube": {"player_client": ["tv_embedded", "tv", "ios"]},
+            # Smart-TV API path — accepts the web cookies file but uses a
+            # different streaming endpoint that isn't (yet) forced into SABR.
+            # ios is a fallback for videos tv rejects.
+            "youtube": {"player_client": ["tv", "ios"]},
             "youtubepot-bgutilhttp": {"base_url": [settings.bgutil_pot_url]},
         },
         "user_agent": (

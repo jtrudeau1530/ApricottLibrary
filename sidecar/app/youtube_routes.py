@@ -103,14 +103,36 @@ async def debug_pot(_user: User = Depends(require_session)) -> dict:
         ping["error"] = str(exc)[:200]
 
     plugin_info: dict = {}
-    try:
-        mod = importlib.import_module("bgutil_ytdlp_pot_provider")
-        plugin_info["import_ok"] = True
-        plugin_info["version"] = getattr(mod, "__version__", "unknown")
-        plugin_info["path"] = getattr(mod, "__file__", None)
-    except Exception as exc:
-        plugin_info["import_ok"] = False
-        plugin_info["error"] = str(exc)[:200]
+    # The plugin is published as 'bgutil-ytdlp-pot-provider' on PyPI but
+    # installs into the yt_dlp_plugins.extractor namespace under names like
+    # 'getpot_bgutil_http' and 'getpot_bgutil_script'.
+    for modname in (
+        "yt_dlp_plugins.extractor.getpot_bgutil_http",
+        "yt_dlp_plugins.extractor.getpot_bgutil_script",
+        "yt_dlp_plugins.extractor.getpot_bgutil",
+        "bgutil_ytdlp_pot_provider",
+    ):
+        try:
+            mod = importlib.import_module(modname)
+            plugin_info[modname] = {
+                "import_ok": True,
+                "version": getattr(mod, "__version__", "unknown"),
+                "path": getattr(mod, "__file__", None),
+            }
+        except Exception as exc:
+            plugin_info[modname] = {"import_ok": False, "error": str(exc)[:160]}
+
+    # Walk the plugin directory to see what's actually on disk.
+    import os
+    plugin_dir_listing: dict = {}
+    for d in [
+        "/usr/local/lib/python3.12/site-packages/yt_dlp_plugins",
+        "/usr/local/lib/python3.12/site-packages/yt_dlp_plugins/extractor",
+    ]:
+        try:
+            plugin_dir_listing[d] = sorted(os.listdir(d))
+        except Exception as exc:
+            plugin_dir_listing[d] = f"error: {exc}"
 
     yt_dlp_plugins: list[str] = []
     try:
@@ -136,6 +158,7 @@ async def debug_pot(_user: User = Depends(require_session)) -> dict:
     return {
         "ping": ping,
         "plugin_info": plugin_info,
+        "plugin_dir_listing": plugin_dir_listing,
         "yt_dlp_info": yt_dlp_plugins,
         "registered_pot_providers": pot_providers,
     }

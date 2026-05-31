@@ -78,9 +78,73 @@ def _raw_formats(video_id: str, *, use_cookies: bool = True, client: str | None 
     if not use_cookies:
         opts.pop("cookiefile", None)
     if client:
-        opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+        # Replace only the youtube clients; keep the PoT plugin base_url.
+        existing = opts.get("extractor_args") or {}
+        existing = {**existing, "youtube": {"player_client": [client]}}
+        opts["extractor_args"] = existing
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+
+
+@router.get("/debug/verbose/{video_id}")
+async def debug_verbose(
+    video_id: str,
+    _user: User = Depends(require_session),
+) -> dict:
+    """Run yt-dlp with verbose=True and capture all log output — lets us see
+    whether the bgutil PoT plugin is actually being called and what tokens
+    it returns (or what error it reports)."""
+    import io
+    import logging as _logging
+    import yt_dlp
+
+    buf = io.StringIO()
+    handler = _logging.StreamHandler(buf)
+    handler.setLevel(_logging.DEBUG)
+    root_logger = _logging.getLogger()
+    prev_level = root_logger.level
+    root_logger.addHandler(handler)
+    root_logger.setLevel(_logging.DEBUG)
+
+    captured_messages: list[str] = []
+
+    class _CapturingLogger:
+        def debug(self, msg): captured_messages.append(f"DEBUG: {msg}")
+        def info(self, msg): captured_messages.append(f"INFO: {msg}")
+        def warning(self, msg): captured_messages.append(f"WARNING: {msg}")
+        def error(self, msg): captured_messages.append(f"ERROR: {msg}")
+
+    error_message: str | None = None
+    format_count = 0
+    try:
+        opts = {
+            **youtube._yt_dlp_common_opts(),
+            "skip_download": True,
+            "ignoreerrors": False,
+            "verbose": True,
+            "logger": _CapturingLogger(),
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = await asyncio.to_thread(
+                ydl.extract_info,
+                f"https://www.youtube.com/watch?v={video_id}",
+                False,
+            )
+        format_count = len((info or {}).get("formats") or [])
+    except Exception as exc:
+        error_message = str(exc)[:400]
+    finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(prev_level)
+
+    pot_relevant = [m for m in captured_messages if "pot" in m.lower() or "bgutil" in m.lower() or "token" in m.lower()]
+    return {
+        "format_count": format_count,
+        "error": error_message,
+        "pot_relevant_log_lines": pot_relevant[:50],
+        "total_log_lines": len(captured_messages),
+        "log_tail": captured_messages[-30:],
+    }
 
 
 @router.get("/debug/pot")

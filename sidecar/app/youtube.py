@@ -42,7 +42,12 @@ def _yt_dlp_common_opts() -> dict:
         "quiet": True,
         "no_warnings": True,
         "extractor_args": {
-            "youtube": {"player_client": ["default", "tv_simply", "web_safari"]},
+            # 'web' and 'web_safari' use SABR streaming, which is what triggers
+            # yt-dlp's PoT framework to call our bgutil-pot plugin. tv_simply
+            # bypasses SABR entirely and ignores the plugin — so it returned 0
+            # formats. Force the SABR clients now that we have a working
+            # PO Token provider.
+            "youtube": {"player_client": ["web", "web_safari", "mweb"]},
             "youtubepot-bgutilhttp": {"base_url": [settings.bgutil_pot_url]},
         },
         "user_agent": (

@@ -42,12 +42,14 @@ def _yt_dlp_common_opts() -> dict:
         "quiet": True,
         "no_warnings": True,
         "extractor_args": {
-            # 'web' and 'web_safari' use SABR streaming, which is what triggers
-            # yt-dlp's PoT framework to call our bgutil-pot plugin. tv_simply
-            # bypasses SABR entirely and ignores the plugin — so it returned 0
-            # formats. Force the SABR clients now that we have a working
-            # PO Token provider.
-            "youtube": {"player_client": ["web", "web_safari", "mweb"]},
+            # YouTube is forcing SABR streaming on web/web_safari/mweb even
+            # with valid PO tokens (yt-dlp issue #12482), stripping the audio
+            # URLs out — only image storyboards come back. The 'tv' client
+            # uses a separate API path that still serves signed HTTPS audio
+            # URLs. 'ios' is a fallback in case 'tv' rejects a specific video.
+            # 'web' is kept last so we still get the PoT plugin engaged
+            # whenever the tv path fails over.
+            "youtube": {"player_client": ["tv", "ios", "web"]},
             "youtubepot-bgutilhttp": {"base_url": [settings.bgutil_pot_url]},
         },
         "user_agent": (

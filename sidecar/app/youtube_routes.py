@@ -383,25 +383,36 @@ async def preview_playlist(
     resolved = [_resolve_one(e) for e in entries]
 
     video_ids = [t.video_id for t in resolved]
-    q_rows = (
+    # Two-bucket dedup: queued/running -> already_queued (still in flight),
+    # complete -> already_in_library (file already fetched). Previously the
+    # complete bucket was missed entirely, so re-importing the same YouTube
+    # playlist after the first run had finished would re-enqueue every
+    # track and produce duplicate library files.
+    rows = (
         await db.execute(
-            select(FetchQueue.source_id).where(
+            select(FetchQueue.source_id, FetchQueue.status).where(
                 FetchQueue.source == "youtube",
                 FetchQueue.source_id.in_(video_ids),
-                FetchQueue.status.in_(["queued", "running"]),
+                FetchQueue.status.in_(["queued", "running", "complete"]),
             )
         )
     ).all()
-    queued_set = {r[0] for r in q_rows}
+    queued_set = {sid for sid, st in rows if st in ("queued", "running")}
+    library_set = {sid for sid, st in rows if st == "complete"}
 
     items = [
-        {**t.model_dump(), "already_queued": t.video_id in queued_set}
+        {
+            **t.model_dump(),
+            "already_queued": t.video_id in queued_set,
+            "already_in_library": t.video_id in library_set,
+        }
         for t in resolved
     ]
 
     return {
         "found": len(entries),
         "queued_count": sum(1 for it in items if it["already_queued"]),
+        "library_count": sum(1 for it in items if it["already_in_library"]),
         "tracks": items,
     }
 
@@ -416,21 +427,31 @@ async def import_resolved(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have fetch permission")
 
     video_ids = [t.video_id for t in body.tracks]
-    q_rows = (
+    # Skip anything queued/running (still in flight) AND anything already
+    # downloaded (status='complete'). Without the complete-bucket check,
+    # re-importing a playlist after its first run produces duplicate
+    # library files since the second pass sees an empty queue and treats
+    # every video as fresh.
+    rows = (
         await db.execute(
-            select(FetchQueue.source_id).where(
+            select(FetchQueue.source_id, FetchQueue.status).where(
                 FetchQueue.source == "youtube",
                 FetchQueue.source_id.in_(video_ids),
-                FetchQueue.status.in_(["queued", "running"]),
+                FetchQueue.status.in_(["queued", "running", "complete"]),
             )
         )
     ).all()
-    queued_set = {r[0] for r in q_rows}
+    queued_set = {sid for sid, st in rows if st in ("queued", "running")}
+    library_set = {sid for sid, st in rows if st == "complete"}
 
     enqueued = 0
     skipped_queued = 0
+    skipped_library = 0
     new_rows: list[FetchQueue] = []
     for t in body.tracks:
+        if t.video_id in library_set:
+            skipped_library += 1
+            continue
         if t.video_id in queued_set:
             skipped_queued += 1
             continue
@@ -479,4 +500,5 @@ async def import_resolved(
     return {
         "enqueued": enqueued,
         "skipped_queued": skipped_queued,
+        "skipped_library": skipped_library,
     }

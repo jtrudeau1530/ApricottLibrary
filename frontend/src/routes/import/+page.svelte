@@ -142,6 +142,7 @@
     cover_url: string | null;
     youtube_title: string;
     already_queued: boolean;
+    already_in_library: boolean;
   };
   let ytUrl = $state('');
   let ytLoading = $state(false);
@@ -149,13 +150,20 @@
   let ytPreview = $state<{
     found: number;
     queued_count: number;
+    library_count: number;
     tracks: YoutubeResolvedTrack[];
   } | null>(null);
   let ytImporting = $state(false);
-  let ytResult = $state<{ enqueued: number; skipped_queued: number } | null>(null);
+  let ytResult = $state<{
+    enqueued: number;
+    skipped_queued: number;
+    skipped_library: number;
+  } | null>(null);
 
   let ytWillEnqueue = $derived(
-    ytPreview ? ytPreview.tracks.filter((t) => !t.already_queued).length : 0
+    ytPreview
+      ? ytPreview.tracks.filter((t) => !t.already_queued && !t.already_in_library).length
+      : 0
   );
 
   async function previewYoutube() {
@@ -427,7 +435,8 @@
     {#if ytResult}
       <div class="mt-3 rounded-lg border border-apricot-500/40 bg-apricot-900/20 px-4 py-3 text-sm">
         <strong>Done.</strong>
-        Enqueued {ytResult.enqueued}, skipped {ytResult.skipped_queued} already queued.
+        Enqueued {ytResult.enqueued}, skipped {ytResult.skipped_library} in library,
+        skipped {ytResult.skipped_queued} already queued.
         MusicBrainz enrichment runs as each track downloads.
       </div>
     {/if}
@@ -445,7 +454,9 @@
               <p class="truncate text-sm">{t.track_name}</p>
               <p class="truncate text-xs text-zinc-500">{t.artist_name}</p>
             </div>
-            {#if t.already_queued}
+            {#if t.already_in_library}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-900 text-emerald-200">In library</span>
+            {:else if t.already_queued}
               <span class="text-xs px-2 py-0.5 rounded bg-apricot-900 text-apricot-200">Queued</span>
             {:else}
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-500">New</span>

@@ -43,6 +43,13 @@ def set_session_cookie(response: Response, token: str) -> None:
     # pass None to set_cookie in that case so we don't emit a malformed
     # Domain= header.
     domain = settings.session_cookie_domain or None
+    # Evict any legacy host-only cookie left over from before the Domain
+    # attribute was added. Without this, the browser keeps both the
+    # host-only and the domain-scoped variant of `apricot_session`, sends
+    # both on each request, and the server reads the stale one first -
+    # producing the "have to delete cookies to log back in" failure mode.
+    if domain is not None:
+        response.delete_cookie(settings.session_cookie_name, path="/")
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
@@ -57,8 +64,12 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 def clear_session_cookie(response: Response) -> None:
     # Must match the domain we set with - otherwise the browser keeps the
-    # old cookie alive and logout silently fails.
+    # old cookie alive and logout silently fails. Also issue a host-only
+    # delete to evict any legacy cookie from before the Domain attribute
+    # was added.
     domain = settings.session_cookie_domain or None
+    if domain is not None:
+        response.delete_cookie(settings.session_cookie_name, path="/")
     response.delete_cookie(
         settings.session_cookie_name, path="/", domain=domain
     )

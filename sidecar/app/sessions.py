@@ -37,19 +37,18 @@ async def destroy_user_sessions(db: AsyncSession, user_id: str) -> None:
 
 
 def set_session_cookie(response: Response, token: str) -> None:
-    # Domain=.zektek.us so the cookie is visible to every *.zektek.us
-    # subdomain (frontend on library.zektek.us reads the cookie set by
-    # api.library.zektek.us). Empty string in config means "host-only" -
-    # pass None to set_cookie in that case so we don't emit a malformed
-    # Domain= header.
+    # Library's SvelteKit frontend takes the token out of this Set-Cookie
+    # via regex and re-issues the browser cookie itself (host-only on
+    # library.zektek.us) - the browser never sees this header directly,
+    # only the sidecar's server-to-server response does. So the Domain
+    # attribute here is effectively dead weight, but kept for clarity
+    # and in case a future client talks straight to api.library.zektek.us.
+    # Do NOT emit a second Set-Cookie alongside this one (e.g. a
+    # host-only delete to evict a legacy cookie): Node's
+    # Headers.get('set-cookie') in the SvelteKit action only returns the
+    # first Set-Cookie value, so any extra header before this one wins
+    # the regex and login silently breaks.
     domain = settings.session_cookie_domain or None
-    # Evict any legacy host-only cookie left over from before the Domain
-    # attribute was added. Without this, the browser keeps both the
-    # host-only and the domain-scoped variant of `apricot_session`, sends
-    # both on each request, and the server reads the stale one first -
-    # producing the "have to delete cookies to log back in" failure mode.
-    if domain is not None:
-        response.delete_cookie(settings.session_cookie_name, path="/")
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
@@ -63,13 +62,9 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 
 def clear_session_cookie(response: Response) -> None:
-    # Must match the domain we set with - otherwise the browser keeps the
-    # old cookie alive and logout silently fails. Also issue a host-only
-    # delete to evict any legacy cookie from before the Domain attribute
-    # was added.
+    # Mirrors set_session_cookie - one Set-Cookie header only, matching
+    # the Domain attribute used on the way in.
     domain = settings.session_cookie_domain or None
-    if domain is not None:
-        response.delete_cookie(settings.session_cookie_name, path="/")
     response.delete_cookie(
         settings.session_cookie_name, path="/", domain=domain
     )

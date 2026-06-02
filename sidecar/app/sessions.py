@@ -37,6 +37,12 @@ async def destroy_user_sessions(db: AsyncSession, user_id: str) -> None:
 
 
 def set_session_cookie(response: Response, token: str) -> None:
+    # Domain=.zektek.us so the cookie is visible to every *.zektek.us
+    # subdomain (frontend on library.zektek.us reads the cookie set by
+    # api.library.zektek.us). Empty string in config means "host-only" -
+    # pass None to set_cookie in that case so we don't emit a malformed
+    # Domain= header.
+    domain = settings.session_cookie_domain or None
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
@@ -44,12 +50,18 @@ def set_session_cookie(response: Response, token: str) -> None:
         secure=settings.session_cookie_secure,
         samesite="lax",
         path="/",
+        domain=domain,
         max_age=settings.session_ttl_days * 86400,
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    # Must match the domain we set with - otherwise the browser keeps the
+    # old cookie alive and logout silently fails.
+    domain = settings.session_cookie_domain or None
+    response.delete_cookie(
+        settings.session_cookie_name, path="/", domain=domain
+    )
 
 
 async def _load_user_from_cookie(request: Request, db: AsyncSession) -> User | None:

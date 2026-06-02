@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     session_cookie_name: str = "apricot_session"
     session_cookie_secure: bool = True
     session_ttl_days: int = 30
+    # Scope the session cookie to *.zektek.us so the frontend on
+    # library.zektek.us can read the cookie set by api.library.zektek.us.
+    # Without this, browsers default to host-only - login POST succeeds
+    # but the frontend never sees the cookie, so the UI silently appears
+    # logged-out (no error shown either). Set to "" in dev/non-zektek
+    # deployments to fall back to host-only behaviour.
+    session_cookie_domain: str = ".zektek.us"
 
     jellyfin_internal_url: str = "http://jellyfin:8096"
     jellyfin_api_key: str = "REPLACE_WITH_JELLYFIN_API_KEY"

@@ -3,7 +3,14 @@
 from datetime import timedelta
 from sqlalchemy import select, func
 from .db import SessionLocal
-from .models import DiscoverySchedule, DiscoveryStation, DiscoveryTrack, User
+from .models import (
+    DiscoverySchedule,
+    DiscoveryStation,
+    DiscoveryTrack,
+    FetchQueue,
+    User,
+)
+from .queue_identity import get_or_enqueue
 from .spotify import spotify
 from .station_worker import now, TERMINAL, catalog_snapshot
 from .track_matching import identity_key, choose_match
@@ -55,6 +62,7 @@ async def schedule_tick():
         # Persist the campaign budget before provider calls; crashes never replay a run.
         await db.commit()
         spent_run = schedule.runs
+        schedule_id = schedule.id
         campaign_query = schedule.query
         phase = "jellyfin_catalog"
         try:
@@ -83,7 +91,7 @@ async def schedule_tick():
             selected = []
             for item in candidates:
                 artists = item.get("artists") or []
-                if not artists or not item.get("name"):
+                if not artists or not item.get("name") or not item.get("id"):
                     continue
                 key = identity_key(artists[0], item["name"])
                 wanted = {
@@ -121,6 +129,28 @@ async def schedule_tick():
             )
             db.add(job)
             await db.flush()
+            queues = {}
+            # Keep authoritative Spotify IDs/duration/art instead of searching
+            # the same title again (which can miss the original recording).
+            # Match the batch helper's lock order for overlapping imports.
+            for item, key in sorted(selected, key=lambda pair: pair[1]):
+                queue, _ = await get_or_enqueue(
+                    db,
+                    FetchQueue(
+                        source="auto",
+                        identity_key=key,
+                        track_name=item["name"],
+                        artist_name=item["artists"][0],
+                        album_name=item.get("album") or "",
+                        spotify_track_id=item["id"],
+                        duration_seconds=round(item["duration_ms"] / 1000)
+                        if item.get("duration_ms")
+                        else None,
+                        cover_url=item.get("cover_url"),
+                        requester_id=owner.id,
+                    ),
+                )
+                queues[key] = queue.id
             for position, (item, key) in enumerate(selected):
                 db.add(
                     DiscoveryTrack(
@@ -131,11 +161,17 @@ async def schedule_tick():
                         album=item.get("album") or "",
                         identity_key=key,
                         reason="Spotify recurring discovery",
+                        queue_id=queues[key],
+                        status="acquiring",
                     )
                 )
             schedule.last_error = None
             await db.commit()
         except Exception as exc:
             error = safe_error(phase, exc)
+            # Preserve the already charged run, but never commit a partial batch
+            # after an enqueue/database failure.
+            await db.rollback()
+            schedule = await db.get(DiscoverySchedule, schedule_id)
             schedule.last_error = error["message"] + " (" + error["code"] + ")"
             await db.commit()

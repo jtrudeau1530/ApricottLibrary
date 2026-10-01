@@ -38,6 +38,17 @@ async def get_or_enqueue(db, row: FetchQueue) -> tuple[FetchQueue, bool]:
         if existing:
             existing.identity_key = key
     if existing:
+        if row.source == "auto":
+            # Trusted matching discovery metadata can fill gaps on a shared row.
+            # Preserve established recording IDs/durations and all media files.
+            for field in (
+                "spotify_track_id",
+                "duration_seconds",
+                "cover_url",
+                "album_name",
+            ):
+                if not getattr(existing, field) and getattr(row, field):
+                    setattr(existing, field, getattr(row, field))
         safe = (
             media_file(existing.output_path, settings.media_path)
             if existing.output_path

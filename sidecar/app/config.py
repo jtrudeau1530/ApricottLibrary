@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -36,6 +37,19 @@ class Settings(BaseSettings):
     # bgutil-pot-provider service URL — yt-dlp's plugin calls it to mint
     # PO Tokens for YouTube's SABR streaming path.
     bgutil_pot_url: str = "http://bgutil-pot:4416"
+
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_max_completion_tokens: int = Field(default=2048, ge=256, le=8192)
+    ai_timeout_seconds: int = Field(default=90, ge=10, le=180)
+    acquisition_concurrency: int = Field(default=2, ge=1, le=4)
+    acquisition_max_attempts: int = Field(default=3, ge=1, le=5)
+    acquisition_timeout_seconds: int = Field(default=300, ge=30, le=900)
+    station_import_attempts: int = Field(default=20, ge=1, le=60)
+    radio_internal_url: str = ""
+    radio_library_token: str = ""
+    radio_public_url: str = ""
 
 
 settings = Settings()

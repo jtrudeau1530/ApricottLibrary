@@ -52,6 +52,9 @@ def _normalize_track(item: dict) -> dict[str, Any]:
         "duration_seconds": duration_seconds,
         "album_art_url": f"/api/catalog/cover/{cover_target}" if cover_target else None,
         "added_at": item.get("DateCreated"),
+        "path": item.get("Path"),
+        "artists": artists,
+        "provider_ids": item.get("ProviderIds") or {},
     }
 
 
@@ -61,13 +64,14 @@ async def list_tracks(
     limit: int = 100,
     offset: int = 0,
     search: str | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Pull a page of audio items from Jellyfin and normalize to Apricot shape."""
     sort_by = _SORT_MAP.get(sort, "DateCreated")
     params: dict[str, Any] = {
         "IncludeItemTypes": "Audio",
         "Recursive": "true",
-        "Fields": "Artists,AlbumArtists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags",
+        "Fields": "Artists,AlbumArtists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags,Path,ProviderIds",
         "SortBy": sort_by,
         "SortOrder": "Descending" if descending else "Ascending",
         "Limit": limit,
@@ -80,9 +84,14 @@ async def list_tracks(
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(url, params=params, headers=_headers())
         if resp.status_code != 200:
+            if strict:
+                raise RuntimeError(f"Jellyfin catalog check failed (HTTP {resp.status_code}); acquisition paused")
             log.warning("Jellyfin Items returned %s: %s", resp.status_code, resp.text[:200])
             return {"count": 0, "total": 0, "items": []}
         body = resp.json()
+        if strict and (not isinstance(body, dict) or not isinstance(body.get("Items"), list)
+                       or not isinstance(body.get("TotalRecordCount"), int)):
+            raise RuntimeError("Jellyfin returned an invalid catalog response; acquisition paused")
     items = [_normalize_track(i) for i in body.get("Items", [])]
     return {
         "count": len(items),
@@ -312,13 +321,16 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
     }
 
 
-async def trigger_refresh() -> None:
+async def trigger_refresh(strict: bool = False) -> None:
     """Best-effort full-library refresh after a download."""
     url = f"{_base_url()}/Library/Refresh"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(url, headers=_headers())
+            resp = await client.post(url, headers=_headers())
+            resp.raise_for_status()
     except Exception as exc:  # pragma: no cover
+        if strict:
+            raise RuntimeError("Jellyfin refresh failed; downloaded files are waiting for indexing") from exc
         log.warning("Jellyfin refresh failed: %s", exc)
 
 

@@ -73,6 +73,10 @@ class FetchQueue(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     output_path: Mapped[str | None] = mapped_column(Text)
+    identity_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    warning_message: Mapped[str | None] = mapped_column(Text)
 
 
 class SongMetadata(Base):
@@ -113,3 +117,44 @@ class PlaylistItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
 
     playlist: Mapped[Playlist] = relationship(back_populates="items")
+
+
+class DiscoveryStation(Base):
+    __tablename__ = "discovery_station"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    prompt: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(String(120))
+    requested_count: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    sync_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    publish_radio: Mapped[bool] = mapped_column(Boolean, default=True)
+    radio_station_id: Mapped[str | None] = mapped_column(String(5))
+    playlist_id: Mapped[str | None] = mapped_column(ForeignKey("playlist.id", ondelete="SET NULL"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, onupdate=_utc_now)
+
+
+class DiscoveryTrack(Base):
+    __tablename__ = "discovery_track"
+    __table_args__ = (UniqueConstraint("station_id", "identity_key", name="uq_discovery_track"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    station_id: Mapped[str] = mapped_column(ForeignKey("discovery_station.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(512))
+    artist: Mapped[str] = mapped_column(String(512))
+    album: Mapped[str] = mapped_column(String(512), default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    identity_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="matching")
+    queue_id: Mapped[str | None] = mapped_column(ForeignKey("fetch_queue.id", ondelete="SET NULL"))
+    jellyfin_item_id: Mapped[str | None] = mapped_column(String(64))
+    relative_path: Mapped[str | None] = mapped_column(Text)
+    match_source: Mapped[str | None] = mapped_column(String(24))
+    import_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)

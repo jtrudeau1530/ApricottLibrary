@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import os
 import re
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 from mutagen.oggvorbis import OggVorbis
-from sqlalchemy import select, update  # noqa: F401
+from sqlalchemy import or_, select, update
 
 from . import jellyfin, librespot_session, musicbrainz, youtube
 from .config import settings
@@ -14,6 +16,7 @@ from .db import SessionLocal
 from .models import FetchQueue, SongMetadata
 from .sse_hub import publish
 from .storage import compute_storage_snapshot
+from .track_matching import media_file, probe
 
 log = logging.getLogger("queue_worker")
 
@@ -24,6 +27,7 @@ _STALE_RUNNING_AGE_SECONDS = 60
 # Brief pause between successful downloads — empirically the librespot session
 # degrades ("Failed fetching audio key") after many rapid back-to-back fetches.
 _INTER_TRACK_PAUSE_SECONDS = 1.5
+_spotify_download_lock = asyncio.Lock()
 
 
 def _utc_now() -> datetime:
@@ -48,6 +52,10 @@ async def _reset_stale_running() -> None:
             .where(FetchQueue.status == "running", FetchQueue.heartbeat_at.is_(None))
             .values(status="queued", started_at=None)
         )
+        await db.execute(update(FetchQueue).where(
+            FetchQueue.source == "auto", FetchQueue.status == "queued",
+            FetchQueue.attempts >= settings.acquisition_max_attempts,
+        ).values(status="failed", error_message="Acquisition retry limit reached after interruption", completed_at=_utc_now()))
         await db.commit()
 
 
@@ -56,6 +64,7 @@ async def _claim_next() -> FetchQueue | None:
         result = await db.execute(
             select(FetchQueue)
             .where(FetchQueue.status == "queued")
+            .where(or_(FetchQueue.next_attempt_at.is_(None), FetchQueue.next_attempt_at <= _utc_now()))
             .order_by(FetchQueue.created_at.asc())
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -83,6 +92,8 @@ async def _mark_complete(item_id: str, output_path: Path) -> None:
                 completed_at=_utc_now(),
                 output_path=str(output_path),
                 error_message=None,
+                next_attempt_at=None,
+                heartbeat_at=None,
             )
         )
         await db.commit()
@@ -106,6 +117,7 @@ async def _heartbeat(item_id: str, progress: int) -> None:
             .values(heartbeat_at=_utc_now(), progress=progress)
         )
         await db.commit()
+    await publish("queue:progress", {"id": item_id, "percent": progress})
 
 
 async def _trigger_jellyfin_refresh() -> None:
@@ -154,7 +166,7 @@ async def _record_spotify_mapping(row: FetchQueue, output_path: Path) -> None:
                 # so we fetch each item's full metadata only if title matches.
                 if item.get("title", "").lower() == row.track_name.lower():
                     full = await jellyfin.get_track(item["id"])
-                    if full and full.get("path", "").endswith(output_path.name):
+                    if full and full.get("path") and Path(full["path"]).resolve() == output_path.resolve():
                         async with SessionLocal() as db:
                             existing = (
                                 await db.execute(
@@ -179,23 +191,36 @@ async def _record_spotify_mapping(row: FetchQueue, output_path: Path) -> None:
         await asyncio.sleep(4)
 
 
-async def _save_album_cover(album_dir: Path, cover_url: str | None) -> None:
+async def _save_album_cover(album_dir: Path, cover_url: str | None) -> bool:
     """Save cover.jpg next to the audio file. Jellyfin auto-picks these up on scan."""
     if not cover_url:
-        return
+        return (album_dir / "cover.jpg").is_file()
     target = album_dir / "cover.jpg"
     if target.exists():
-        return
+        return True
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(cover_url)
             if resp.status_code != 200:
                 log.warning("Cover fetch %s returned %s", cover_url, resp.status_code)
-                return
+                return False
+            if resp.headers.get("content-type", "").split(";")[0] not in ("image/jpeg", "image/png") or not 0 < len(resp.content) <= 5_000_000:
+                return False
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resp.content)
+            fd, temporary = tempfile.mkstemp(dir=target.parent, suffix=".part")
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(resp.content)
+                try:
+                    os.link(temporary, target)
+                except FileExistsError:
+                    pass
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+            return True
     except Exception as exc:
         log.warning("Cover save failed for %s: %s", album_dir, exc)
+        return False
 
 
 async def _download_one(row: FetchQueue) -> None:
@@ -223,19 +248,33 @@ async def _download_one(row: FetchQueue) -> None:
             await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
             progress = min(progress + 10, 95)
             await _heartbeat(row.id, progress)
-            await publish("queue:progress", {"id": row.id, "percent": progress})
 
     try:
         heartbeat_task = asyncio.create_task(_beat())
         source = (row.source or "spotify").lower()
-        if source == "youtube":
+        if source == "auto":
+            # Keep the heartbeat alive during network/tagging work, but don't
+            # invent a percent based on elapsed time for automatic acquisition.
+            heartbeat_task.cancel()
+            async def _auto_beat():
+                while True:
+                    await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+                    async with SessionLocal() as db:
+                        await db.execute(update(FetchQueue).where(FetchQueue.id == row.id).values(heartbeat_at=_utc_now()))
+                        await db.commit()
+            heartbeat_task = asyncio.create_task(_auto_beat())
+            from .acquisition import acquire
+            output_path = await acquire(row)
+        elif source == "youtube":
             if not row.source_id:
                 raise RuntimeError("YouTube queue row missing source_id (video id)")
             await asyncio.to_thread(youtube.download_audio, row.source_id, output_path)
         else:
             if not row.spotify_track_id:
                 raise RuntimeError("Spotify queue row missing spotify_track_id")
-            await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
+            async with _spotify_download_lock:
+                await asyncio.to_thread(librespot_session.download_track, row.spotify_track_id, output_path)
+                await asyncio.sleep(_INTER_TRACK_PAUSE_SECONDS)
         if heartbeat_task:
             heartbeat_task.cancel()
 
@@ -277,13 +316,17 @@ async def _download_one(row: FetchQueue) -> None:
                     except OSError:
                         break
                 output_path = new_path
-        await asyncio.to_thread(
-            _write_ogg_tags, output_path, final_title, final_artist, final_album
-        )
-        await _save_album_cover(output_path.parent, final_cover)
+        if source != "auto":
+            await asyncio.to_thread(
+                _write_ogg_tags, output_path, final_title, final_artist, final_album
+            )
+            await _save_album_cover(output_path.parent, final_cover)
+        if not media_file(output_path, settings.media_path) or not await asyncio.to_thread(probe, output_path):
+            raise RuntimeError("Download produced no valid audio; acquisition was not completed")
         await _mark_complete(row.id, output_path)
         # Best-effort: record spotify_track_id → jellyfin_item_id once Jellyfin sees it.
-        asyncio.create_task(_record_spotify_mapping(row, output_path))
+        if row.spotify_track_id and source != "auto":
+            asyncio.create_task(_record_spotify_mapping(row, output_path))
         await publish(
             "queue:complete",
             {"id": row.id, "output_path": str(output_path.relative_to(settings.media_path))},
@@ -295,13 +338,26 @@ async def _download_one(row: FetchQueue) -> None:
         if heartbeat_task:
             heartbeat_task.cancel()
         log.exception("Download failed for %s", row.id)
-        await _mark_failed(row.id, str(exc))
-        await publish("queue:error", {"id": row.id, "error_message": str(exc)})
+        from .acquisition import TrackUnavailable
+        error = str(exc) or type(exc).__name__
+        if row.source == "auto" and row.attempts < settings.acquisition_max_attempts and not isinstance(exc, TrackUnavailable):
+            async with SessionLocal() as db:
+                await db.execute(update(FetchQueue).where(FetchQueue.id == row.id).values(
+                    status="queued", progress=0, error_message=error, heartbeat_at=None,
+                    next_attempt_at=_utc_now() + timedelta(seconds=10 * 2 ** (row.attempts - 1)),
+                ))
+                await db.commit()
+            await publish("queue:retry", {"id": row.id, "error_message": error})
+        else:
+            await _mark_failed(row.id, error)
+            await publish("queue:error", {"id": row.id, "error_message": error})
+    finally:
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
-async def start_worker() -> None:
-    log.info("Queue worker starting")
-    await _reset_stale_running()
+async def _worker_loop() -> None:
     while True:
         try:
             row = await _claim_next()
@@ -316,3 +372,23 @@ async def start_worker() -> None:
         except Exception:  # pragma: no cover
             log.exception("Worker loop error — sleeping and continuing")
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+
+
+async def start_worker() -> None:
+    log.info("Queue worker starting with concurrency %d", settings.acquisition_concurrency)
+    await _reset_stale_running()
+    async def recover():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await _reset_stale_running()
+            except Exception:
+                log.exception("Queue recovery check failed; retrying on the next interval")
+    tasks = [asyncio.create_task(_worker_loop()) for _ in range(settings.acquisition_concurrency)]
+    tasks.append(asyncio.create_task(recover()))
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

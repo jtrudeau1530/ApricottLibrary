@@ -28,6 +28,8 @@ from .sessions import require_admin, require_session
 from .spotify import spotify
 from .sse_routes import router as sse_router
 from .storage import compute_storage_snapshot
+from .station_routes import router as station_router
+from .station_worker import start_station_worker
 
 log = logging.getLogger("sidecar")
 
@@ -50,11 +52,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # pragma: no cover
         log.info("Queue worker not started: %s", exc)
 
-    yield
-
-    task = getattr(app.state, "queue_worker_task", None)
-    if task is not None:
-        task.cancel()
+    app.state.station_worker_task = asyncio.create_task(start_station_worker())
+    try:
+        yield
+    finally:
+        tasks = [getattr(app.state, name, None) for name in ("queue_worker_task", "station_worker_task")]
+        tasks = [t for t in tasks if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Apricot Library Sidecar", lifespan=lifespan)
@@ -80,6 +86,7 @@ app.include_router(admin_router)
 app.include_router(spotify_playlist_router)
 app.include_router(spotify_paste_router)
 app.include_router(youtube_router)
+app.include_router(station_router)
 
 
 # Authenticated wrappers around the existing Spotify + librespot routers.

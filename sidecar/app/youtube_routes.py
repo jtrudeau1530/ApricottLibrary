@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import youtube
 from .db import get_db
 from .models import FetchQueue, User
+from .queue_identity import enqueue_batch
 from .sessions import require_session
 from .sse_hub import publish
 
@@ -471,7 +472,10 @@ async def import_resolved(
         enqueued += 1
 
     if new_rows:
-        db.add_all(new_rows)
+        new_rows, dedup_queued, dedup_library = await enqueue_batch(db, new_rows)
+        enqueued = len(new_rows)
+        skipped_queued += dedup_queued
+        skipped_library += dedup_library
         await db.commit()
         for r in new_rows:
             await publish(

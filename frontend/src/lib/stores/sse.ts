@@ -2,7 +2,7 @@ import { writable, derived, type Readable } from 'svelte/store';
 
 export type QueueItem = {
   id: string;
-  source?: 'spotify' | 'youtube';
+  source?: 'spotify' | 'youtube' | 'auto';
   source_id?: string | null;
   spotify_track_id: string | null;
   track_name: string;
@@ -30,11 +30,13 @@ type SseEvent =
   | { type: 'queue:error'; data: { id: string; error_message: string } }
   | { type: 'queue:retry'; data: { id: string } }
   | { type: 'queue:hello'; data: { message: string } }
+  | { type: 'catalog:updated'; data: { station_id: string } }
   | { type: 'storage:update'; data: StorageSnapshot };
 
 const queueMap = writable<Record<string, QueueItem>>({});
 export const storage = writable<StorageSnapshot | null>(null);
 export const connected = writable(false);
+export const catalogRevision = writable(0);
 
 let source: EventSource | null = null;
 
@@ -105,6 +107,9 @@ function handle(evt: SseEvent) {
     case 'storage:update':
       storage.set(evt.data);
       break;
+    case 'catalog:updated':
+      catalogRevision.update((revision) => revision + 1);
+      break;
     case 'queue:hello':
     default:
       break;
@@ -122,5 +127,5 @@ export const queueItems: Readable<QueueItem[]> = derived(queueMap, ($m) =>
 export const queueCount: Readable<number> = derived(queueItems, ($q) => $q.length);
 
 export const queuedTrackIds: Readable<Set<string>> = derived(queueItems, ($q) => {
-  return new Set($q.map((i) => i.spotify_track_id));
+  return new Set($q.map((i) => i.spotify_track_id).filter((id): id is string => id !== null));
 });

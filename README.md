@@ -4,6 +4,124 @@ The library backend for the Apricot Suite — music storage, metadata, and downl
 
 Companion to [Apricot Radio](https://github.com/jtrudeau1530/ApricottRadio). Radio streams; Library stores.
 
+## AI station maker
+
+Open **AI stations** from Library's home page (`/stations`), describe a vibe,
+choose 5–50 songs, and press **Make station**. A persistent background job
+generates suggestions, checks the complete Jellyfin catalog (including Library
+metadata overrides) and the shared Library media files, then automatically
+queues missing recordings. No per-song approval is needed. Jobs continue when
+the page closes and resume after sidecar restarts.
+
+Matching normalizes Unicode and punctuation while retaining recording-version
+words such as live, remix and acoustic. Different-length recordings with the
+same tags are reported as ambiguous rather than silently substituted. The
+queue shares a canonical recording identity across AI stations, Spotify imports
+and YouTube imports, using PostgreSQL locks and a unique constraint to prevent
+new concurrent duplicate jobs. Existing queue history is reused; this migration
+does not delete old duplicate files or queue rows.
+
+Automatic acquisition reuses yt-dlp for public YouTube audio, accepts matching
+Topic/official-audio results, validates the produced OGG and duration, writes
+tags and artwork, and atomically imports the file without overwriting existing
+audio. Spotify discovery is optional metadata enrichment; the station workflow
+does not initiate Spotify/librespot downloads. Existing manually requested queue
+work can be reused. The new public-source path does not use cookies, token
+plugins, geographic bypass, DRM formats or access-control bypass. If a source is
+restricted or no confident recording is found, that track fails visibly.
+
+The UI distinguishes existing music, acquisition, files awaiting Jellyfin
+indexing, verified imports, failures, and Radio sync. A playlist contains only
+tracks confirmed by Jellyfin. A downloaded file that is not indexed within the
+limit remains on disk and is reported as an import failure, never as a completed
+station track. Artwork problems are reported separately from audio failures.
+**Retry failed work** retries the station as a batch; **Retry Radio sync** leaves
+the downloaded music and playlist intact.
+
+Configure the Library sidecar environment (also passed through Compose):
+
+| Variable | Purpose / default |
+|---|---|
+| `AI_BASE_URL` | OpenAI-compatible API root, default `https://api.openai.com/v1` |
+| `AI_MODEL` | Required provider model name; no model is silently selected |
+| `AI_API_KEY` | Provider key if required; may be empty for a local provider |
+| `AI_MAX_COMPLETION_TOKENS` | Hard output token budget, default 2048; configurable from 256 to 8192 |
+| `AI_TIMEOUT_SECONDS` | Generation timeout, default 90 |
+| `ACQUISITION_CONCURRENCY` | Queue workers per sidecar process, default 2, maximum 4 |
+| `ACQUISITION_MAX_ATTEMPTS` | Automatic download and job/sync retry limit, default 3 |
+| `ACQUISITION_TIMEOUT_SECONDS` | Public download subprocess timeout, default 300 |
+| `STATION_IMPORT_ATTEMPTS` | Jellyfin indexing polls per recording, default 20 at 15-second intervals |
+| `RADIO_INTERNAL_URL` | Reachable Radio sidecar origin, without `/api` |
+| `RADIO_LIBRARY_TOKEN` | Dedicated integration secret, identical on Library and Radio |
+| `RADIO_PUBLIC_URL` | Optional Radio frontend origin for station links |
+
+The AI endpoint must accept Chat Completions with JSON object mode. Responses
+are validated locally; see the [official JSON-mode documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
+Generation, network errors and Radio sync use bounded retries with backoff;
+public downloads also have process-group cancellation so ffmpeg does not keep
+running after timeout or shutdown. Each user may have three active station jobs.
+
+For Radio station creation, configure `RADIO_LIBRARY_TOKEN` on Radio's
+`radio-engine` service and use a reachable `RADIO_INTERNAL_URL` in Library. Both
+services must mount the same media directory, writable in Library and readable
+in Radio. The new `/api/library/stations/sync` endpoint validates and incrementally
+indexes only the requested files using Radio's existing catalog helpers, then
+adds them to an idempotent station associated with the Library job. Retries
+preserve Radio operator edits and the station queue. Library and Radio currently
+use different user/session tables: the authenticated Library owner's username
+must match a Radio account with `station_manager` or `admin` role, and Radio's
+station cap still applies. Jellyfin audio outside Library's shared media mount
+can enter a Library playlist but cannot be synchronized to Radio through this
+integration; the job reports that failure explicitly.
+
+Without Radio configuration, the UI offers Library playlists. Radio integration
+is disabled by default and uses its own service token, not the Radio bootstrap
+admin token or forwarded session cookies. Keep API keys and integration secrets
+in local/deployment environment settings.
+
+### Prepared configuration (2026-10-01)
+
+Library's ignored, owner-only `.env` selects `AI_MODEL=gpt-4o-mini`,
+`AI_BASE_URL=https://api.openai.com/v1`, `AI_MAX_COMPLETION_TOKENS=2048`, and
+`AI_TIMEOUT_SECONDS=45`. This older, non-reasoning model supports Chat
+Completions and JSON object mode; no reasoning parameters are sent. Current
+standard pricing is $0.15 per million input tokens and $0.60 per million output
+tokens ([official model reference](https://developers.openai.com/api/docs/models/gpt-4o-mini)).
+Its availability was confirmed using the configured account's read-only model
+endpoint. No paid station generation was performed. Compact responses keep
+reasons short; if a large station exceeds the budget, generation fails visibly
+before acquisition. Request fewer songs or increase the environment limit.
+
+`RADIO_INTERNAL_URL=http://radio-engine:8000` uses the actual Radio service alias
+on the shared `coolify` Docker network. A request from the running Library
+sidecar to its `/api/health` returned HTTP 200. Both live services already mount
+the same host media directory; Radio reads it at `/library_media` and Library
+writes it at `/media`. `RADIO_PUBLIC_URL=https://radio.zektek.us` supplies station
+links. No new network or public port is needed in this Coolify environment.
+
+The OpenAI key was reused from KTalk's existing backend credential without
+changing KTalk. Library and Radio's ignored `.env` files have mode `0600` and
+contain the same dedicated `RADIO_LIBRARY_TOKEN`; the OpenAI key is present only
+in Library's file. These settings feed backend services through Compose; they
+are not frontend build arguments. Preserve these files outside version control.
+Coolify manages deployment variables separately: securely transfer Library's
+AI and Radio settings to Library's runtime environment, and only the matching
+`RADIO_LIBRARY_TOKEN` to Radio's runtime environment before an authorized
+rollout. Keep both services attached to the existing shared `coolify` network.
+Local `.env` files are not automatically uploaded to Coolify.
+
+Configuration is prepared locally, not applied to the running containers.
+Neither service was rebuilt, restarted or deployed. The new authenticated sync
+endpoint, migrations, station generation, acquisition and playback still need
+verification after an authorized rollout; the existing health endpoint alone
+does not verify the new workflow.
+
+Library migration `0003_discovery_stations` and Radio migration
+`0012_library_station_jobs` run through the existing startup migration hooks.
+The feature is implemented in source; no live providers, database migrations,
+download/import cycle or Radio playback have been exercised as part of this
+change. Tests were intentionally not run.
+
 ## What it is
 
 - **Jellyfin** as the music catalog, browser, and metadata source (built-in MusicBrainz integration).

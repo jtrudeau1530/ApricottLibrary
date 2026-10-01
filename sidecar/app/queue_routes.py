@@ -9,6 +9,7 @@ from .db import get_db
 from .models import FetchQueue, User
 from .sessions import require_session
 from .sse_hub import publish
+from .queue_identity import get_or_enqueue
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
@@ -39,6 +40,8 @@ class QueueRowOut(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    next_attempt_at: datetime | None
+    warning_message: str | None
 
 
 async def _to_out(row: FetchQueue, requester_username: str | None) -> QueueRowOut:
@@ -60,6 +63,8 @@ async def _to_out(row: FetchQueue, requester_username: str | None) -> QueueRowOu
         created_at=row.created_at,
         started_at=row.started_at,
         completed_at=row.completed_at,
+        next_attempt_at=row.next_attempt_at,
+        warning_message=row.warning_message,
     )
 
 
@@ -89,7 +94,9 @@ async def enqueue(
         cover_url=body.cover_url,
         requester_id=user.id,
     )
-    db.add(row)
+    row, created = await get_or_enqueue(db, row)
+    if not created:
+        raise HTTPException(409, "Recording already acquired or queued; use queue retry for a failed recording")
     await db.commit()
     await db.refresh(row)
 
@@ -152,6 +159,8 @@ async def retry_all_failed(
         row.completed_at = None
         row.heartbeat_at = None
         row.progress = 0
+        row.attempts = 0
+        row.next_attempt_at = None
     await db.commit()
     for row in rows:
         await publish("queue:retry", {"id": row.id})
@@ -182,6 +191,8 @@ async def retry_queue_item(
             completed_at=None,
             heartbeat_at=None,
             progress=0,
+            attempts=0,
+            next_attempt_at=None,
         )
     )
     await db.commit()

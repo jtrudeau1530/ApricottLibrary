@@ -5,13 +5,20 @@
   import QueueWidget from '$lib/components/QueueWidget.svelte';
   import StorageWidget from '$lib/components/StorageWidget.svelte';
   import PlaylistStrip from '$lib/components/PlaylistStrip.svelte';
-  import { startSse, stopSse, seedQueue, queueCount } from '$lib/stores/sse';
+  import type { ComponentProps } from 'svelte';
+  import { startSse, stopSse, seedQueue, queueCount, catalogRevision } from '$lib/stores/sse';
+  import { invalidateAll } from '$app/navigation';
 
   let { data } = $props();
 
   onMount(() => {
     seedQueue(data.queue as never);
     startSse();
+    let initial = true;
+    return catalogRevision.subscribe(() => {
+      if (initial) initial = false;
+      else void invalidateAll();
+    });
   });
   onDestroy(() => stopSse());
 </script>
@@ -31,6 +38,7 @@
       {/if}
     </div>
     <div class="flex items-center gap-3 text-sm">
+      <a href="/stations" class="text-apricot-300 hover:text-apricot-200">AI stations</a>
       <a href="/playlists" class="text-zinc-400 hover:text-zinc-100">Playlists</a>
       <a href="/import" class="text-zinc-400 hover:text-zinc-100">Import</a>
       <span class="text-zinc-500">·</span>
@@ -52,7 +60,7 @@
   <div class="grid lg:grid-cols-[1fr_320px] gap-6 px-6 py-6 max-w-screen-2xl mx-auto">
     <div class="space-y-6">
       <SearchBox />
-      <CatalogList tracks={(data.tracks as { items: never[] }).items} total={(data.tracks as { total: number }).total} />
+      <CatalogList tracks={data.tracks.items as ComponentProps<typeof CatalogList>['tracks']} total={data.tracks.total} />
     </div>
     <aside class="space-y-6">
       <QueueWidget />

@@ -214,3 +214,81 @@ def download_audio(video_id: str, output_path: Path) -> Path:
         produced = matches[0]
         produced = produced.rename(output_path.with_suffix(".ogg"))
     return produced
+
+
+async def _public_command(args: list[str], timeout: int) -> str:
+    """Isolated public-source extractor; no cookies, token plugins, or local config.
+
+    A killed process group also stops ffmpeg on timeout or app shutdown.
+    """
+    import asyncio
+    import os
+    import signal
+    import sys
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
+        "--no-remote-components", "--xff", "never", "--no-allow-unplayable-formats",
+        "--no-cookies", "--no-cookies-from-browser", "--socket-timeout", "15",
+        "--retries", "1", "--fragment-retries", "1", "--no-playlist", *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout)
+    except BaseException as exc:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        if isinstance(exc, TimeoutError):
+            raise RuntimeError(f"Public audio provider timed out after {timeout} seconds") from exc
+        raise
+    if proc.returncode:
+        # Upstream stderr may contain signed URLs; do not persist it in UI/errors.
+        raise RuntimeError(f"Public audio provider unavailable or restricted (exit {proc.returncode})")
+    return stdout.decode("utf-8", errors="replace")
+
+
+async def search_public_audio(artist: str, title: str) -> list[dict]:
+    import json
+    from .track_matching import normalize
+
+    raw = await _public_command([
+        "--flat-playlist", "--dump-single-json", "--skip-download",
+        f"ytsearch5:{artist} {title} official audio",
+    ], 60)
+    entries = json.loads(raw).get("entries") or []
+    candidates = []
+    for entry in entries:
+        if not entry or not re.fullmatch(r"[A-Za-z0-9_-]{11}", entry.get("id") or ""):
+            continue
+        channel = entry.get("channel") or entry.get("uploader") or ""
+        parsed_artist, parsed_title = parse_title(entry.get("title") or "", channel)
+        # parse_title strips featured artists for older imports. Preserve them
+        # for discovery so a distinct recording cannot silently substitute.
+        if re.search(r"\b(feat|ft)\b", entry.get("title") or "", re.I):
+            continue
+        candidates.append({
+            "source_id": entry["id"], "title": parsed_title, "artist": parsed_artist,
+            "duration_seconds": entry.get("duration"), "cover_url": _best_thumbnail(entry),
+            "preferred": normalize(channel).endswith("topic") or "official audio" in (entry.get("title") or "").lower(),
+        })
+    return candidates
+
+
+async def download_public_audio(video_id: str, output_path: Path) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        raise ValueError("Invalid public audio source identifier")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    await _public_command([
+        "--quiet", "--no-progress", "--no-overwrites", "-f", "bestaudio/best",
+        "--match-filter", "!is_live & !has_drm",
+        "--extract-audio", "--audio-format", "vorbis", "--audio-quality", "0",
+        "--output", str(output_path.with_suffix("")) + ".%(ext)s",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ], settings.acquisition_timeout_seconds)
+    if not output_path.is_file():
+        raise RuntimeError("Provider produced no OGG audio")
+    return output_path

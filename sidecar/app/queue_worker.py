@@ -205,6 +205,8 @@ async def _save_album_cover(album_dir: Path, cover_url: str | None) -> bool:
             try:
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(resp.content)
+                # Shared consumers must be able to read artwork as well as audio.
+                os.chmod(temporary, 0o644)
                 try:
                     os.link(temporary, target)
                 except FileExistsError:

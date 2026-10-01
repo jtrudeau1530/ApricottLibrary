@@ -172,6 +172,9 @@ async def acquire(row: FetchQueue) -> Path:
             os.close(fd)
             try:
                 shutil.copyfile(staged, temporary)
+                # mkstemp defaults to 0600; Jellyfin/Radio run as other users.
+                # Only the new validated file receives shared read permissions.
+                os.chmod(temporary, 0o644)
                 os.link(temporary, target)
             except FileExistsError:
                 existing = probe(target)

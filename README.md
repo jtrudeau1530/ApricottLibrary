@@ -118,10 +118,15 @@ between slskd versions, so Library uses the daemon default and cancels its own
 bounded search after reading results.
 
 Correction migrations are additive (`0004_library_discovery` and Radio's
-`0013_library_refresh`); no jobs/media are dropped. This correction has not been
-committed, pushed, deployed or exercised through actual acquisition/import or
-scheduled refresh. Syntax, app imports/OpenAPI, frontend type checks and secret
-scans are static checks; no tests or production migrations were run.
+`0013_library_refresh`); no jobs/media are dropped. Back up the shared database,
+Coolify configuration and slskd state before deployment. Library's private network
+provides unique `apricott-library-api` and `apricott-library-db` aliases; use these
+for consumers instead of ambiguous names on Coolify's shared network. Consumers
+join the private network and authenticate against the read-only catalog endpoint.
+Syntax, app imports/OpenAPI, frontend type checks and secret scans are static
+checks. Verify real audio acquisition, tags/artwork, Jellyfin indexing and consumer
+refresh separately; health/build checks alone do not establish success. Automated
+tests were not run.
 
 ## What it is
 

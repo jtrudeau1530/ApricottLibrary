@@ -47,6 +47,9 @@ services:
 
   postgres:
     image: postgres:16
+    networks:
+      default:
+        aliases: [apricott-library-db]
     container_name: apricot-library-postgres
     restart: unless-stopped
     environment:
@@ -80,6 +83,9 @@ services:
 
   sidecar:
     build: ./sidecar
+    networks:
+      default:
+        aliases: [apricott-library-api]
     container_name: apricot-library-sidecar
     restart: unless-stopped
     environment:

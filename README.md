@@ -111,6 +111,11 @@ Production slskd uses `/app/downloads` and `/app/incomplete`, outside the shared
 `/downloads` mount. Readiness now detects this mismatch before requesting a
 transfer. The completed path must be configured into the shared downloads mount;
 the corrected Compose now sets completed/incomplete directories explicitly.
+Create `complete` and `incomplete` inside the shared downloads directory before
+starting slskd, owned by its configured PUID/PGID; slskd requires these directories
+to exist. Preserve existing files when changing paths. Search timeout units differ
+between slskd versions, so Library uses the daemon default and cancels its own
+bounded search after reading results.
 
 Correction migrations are additive (`0004_library_discovery` and Radio's
 `0013_library_refresh`); no jobs/media are dropped. This correction has not been

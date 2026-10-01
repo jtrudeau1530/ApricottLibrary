@@ -80,6 +80,7 @@ async def acquire(row: FetchQueue) -> Path:
     wanted = {
         "title": row.track_name,
         "artist": row.artist_name,
+        "album": row.album_name,
         "duration_seconds": row.duration_seconds,
     }
     target = (

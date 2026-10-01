@@ -22,7 +22,8 @@ async def download(wanted, output):
         "/searches",
         json={
             "searchText": wanted["artist"] + " " + wanted["title"],
-            "searchTimeout": 5,
+            # The installed daemon interpreted 5 as milliseconds despite its
+            # API documentation. Use its default and stop the search in finally.
             "fileLimit": 100,
             "responseLimit": 20,
             "maximumPeerQueueLength": 5,
@@ -39,13 +40,18 @@ async def download(wanted, output):
                 raw = PureWindowsPath(name)
                 if raw.suffix.lower() not in {".flac", ".ogg", ".mp3", ".m4a", ".wav"}:
                     continue
-                title = re.sub(r"^\d+[ ._-]+", "", raw.stem)
+                title = normalize(raw.stem)
                 artist = wanted["artist"]
                 if not (" " + normalize(artist) + " ") in (" " + normalize(name) + " "):
                     continue
-                title = re.sub(
-                    r"^" + re.escape(artist) + r"\s*[-–]\s*", "", title, flags=re.I
-                )
+                # Strip only known artist/album and numeric track prefixes.
+                # Keep version suffixes (clean/live/remix) for exact matching.
+                title = re.sub(r"^(?:\d+\s+){1,2}", "", title)
+                for prefix in (artist, wanted.get("album") or ""):
+                    prefix = normalize(prefix)
+                    if prefix and title.startswith(prefix + " "):
+                        title = title[len(prefix) + 1 :]
+                title = re.sub(r"^(?:\d+\s+){1,2}", "", title)
                 length = f.get("length")
                 for attr in f.get("attributes") or []:
                     if isinstance(attr, dict) and attr.get("type") in (1, "Length"):

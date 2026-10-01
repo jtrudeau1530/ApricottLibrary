@@ -38,7 +38,7 @@
       {/if}
     </div>
     <div class="flex items-center gap-3 text-sm">
-      <a href="/stations" class="text-apricot-300 hover:text-apricot-200">AI stations</a>
+      <a href="/discover" class="text-apricot-300 hover:text-apricot-200">Discover music</a>
       <a href="/playlists" class="text-zinc-400 hover:text-zinc-100">Playlists</a>
       <a href="/import" class="text-zinc-400 hover:text-zinc-100">Import</a>
       <span class="text-zinc-500">·</span>

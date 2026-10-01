@@ -112,53 +112,37 @@ async def acquire(row: FetchQueue) -> Path:
         return Path(local_match["path"])
 
     await _heartbeat(row.id, 10)
-    candidates = await youtube.search_public_audio(row.artist_name, row.track_name)
-    candidates = [
-        c
-        for c in candidates
-        if c["preferred"]
-        and matches(wanted, c)
-        and c.get("duration_seconds")
-        and 15 <= c["duration_seconds"] <= 3600
-    ]
-    if not candidates:
-        raise TrackUnavailable(
-            "No confident public audio match; recording is unavailable from this provider"
-        )
-    candidates.sort(key=lambda c: not c["preferred"])
-    selected, ambiguous = choose_match(wanted, candidates)
-    if ambiguous or not selected:
-        raise TrackUnavailable(
-            "Public audio search returned ambiguous recordings; nothing was acquired"
-        )
-    expected = row.duration_seconds or round(selected["duration_seconds"])
-    async with SessionLocal() as db:
-        await db.execute(
-            update(FetchQueue)
-            .where(FetchQueue.id == row.id)
-            .values(
-                source_id=selected["source_id"],
-                duration_seconds=expected,
-                cover_url=row.cover_url or selected.get("cover_url"),
-            )
-        )
-        await db.commit()
-    await _heartbeat(row.id, 25)
-
     stage_root = Path(settings.downloads_path)
     stage_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
-        prefix=f"station-{row.id}-", dir=stage_root
+        prefix=f"discovery-{row.id}-", dir=stage_root
     ) as directory:
         staged = Path(directory) / "audio.ogg"
-        await youtube.download_public_audio(selected["source_id"], staged)
+        try:
+            async with asyncio.timeout(settings.acquisition_timeout_seconds):
+                expected = await download_with_fallback(row, wanted, staged)
+        except TimeoutError as exc:
+            raise RuntimeError(
+                "Overall audio-provider timeout reached; bounded retry may be used. See the per-provider attempt details."
+            ) from exc
         meta = await asyncio.to_thread(probe, staged)
         if not meta or abs(meta["duration_seconds"] - expected) > max(
             5, expected * 0.03
         ):
             raise TrackUnavailable(
-                "Downloaded audio failed format/duration validation; it was not imported"
+                "Acquired audio failed format/duration validation; it was not imported"
             )
+
+        # Reuse Library's existing MusicBrainz enrichment without changing identity.
+        from .musicbrainz import enrich
+
+        enriched = None
+        try:
+            enriched = await enrich(row.artist_name, row.track_name)
+        except Exception:
+            pass
+        if enriched and not row.cover_url:
+            row.cover_url = enriched.get("cover_url")
 
         def tag_and_import():
             audio = OggVorbis(staged)
@@ -166,6 +150,15 @@ async def acquire(row: FetchQueue) -> Path:
             audio["artist"] = row.artist_name
             audio["album"] = row.album_name or "Singles"
             audio["apricott_identity"] = row.identity_key
+            if enriched:
+                if enriched.get("genres"):
+                    audio["genre"] = enriched["genres"]
+                if enriched.get("year"):
+                    audio["date"] = str(enriched["year"])
+                if enriched.get("artist_mbid"):
+                    audio["musicbrainz_artistid"] = enriched["artist_mbid"]
+                if enriched.get("release_mbid"):
+                    audio["musicbrainz_albumid"] = enriched["release_mbid"]
             if row.spotify_track_id:
                 audio["spotify_track_id"] = row.spotify_track_id
             audio.save()
@@ -194,5 +187,122 @@ async def acquire(row: FetchQueue) -> Path:
     if not media_file(target, settings.media_path):
         raise RuntimeError("Imported audio is missing")
     await _heartbeat(row.id, 90)
-    await finish_art(row, target, row.cover_url or selected.get("cover_url"))
+    await finish_art(row, target, row.cover_url)
     return target
+
+
+async def download_with_fallback(row, wanted, staged):
+    from . import soulseek
+    from .providers import ProviderFailure, safe_error
+
+    errors = [
+        e
+        for e in (row.provider_errors or [])
+        if e.get("provider") == "spotify_metadata"
+    ]
+
+    async def record(entry):
+        errors.append(entry)
+        async with SessionLocal() as db:
+            await db.execute(
+                update(FetchQueue)
+                .where(FetchQueue.id == row.id)
+                .values(provider_errors=errors[-20:])
+            )
+            await db.commit()
+
+    for provider in ("soulseek", "youtube"):
+        staged.unlink(missing_ok=True)
+        try:
+            if provider == "soulseek":
+                expected = await soulseek.download(wanted, staged)
+            else:
+                candidates = await youtube.search_public_audio(
+                    row.artist_name, row.track_name
+                )
+                candidates = [
+                    c
+                    for c in candidates
+                    if c["preferred"]
+                    and matches(wanted, c)
+                    and c.get("duration_seconds")
+                    and 15 <= c["duration_seconds"] <= 3600
+                ]
+                _, ambiguous = choose_match(wanted, candidates)
+                if ambiguous:
+                    raise ProviderFailure(
+                        "youtube",
+                        "ambiguous",
+                        "Different YouTube recordings share the title; no confident duration/version match.",
+                    )
+                if not candidates:
+                    raise ProviderFailure(
+                        "youtube",
+                        "no_match",
+                        "No YouTube result matched artist/title/version and known duration. Official, artist-channel or Topic evidence required.",
+                    )
+                expected = None
+                for candidate in candidates[:2]:
+                    staged.unlink(missing_ok=True)
+                    try:
+                        await youtube.download_public_audio(
+                            candidate["source_id"], staged
+                        )
+                        expected = (
+                            wanted.get("duration_seconds")
+                            or candidate["duration_seconds"]
+                        )
+                        meta = await asyncio.to_thread(probe, staged)
+                        if not meta or abs(meta["duration_seconds"] - expected) > max(
+                            5, expected * 0.03
+                        ):
+                            raise ProviderFailure(
+                                "youtube",
+                                "duration_mismatch",
+                                "YouTube output duration does not match the requested recording.",
+                            )
+                        break
+                    except Exception as exc:
+                        await record(safe_error(provider, exc))
+                        expected = None
+                if expected is None:
+                    raise ProviderFailure(
+                        "youtube",
+                        "candidates_failed",
+                        "Both matching YouTube candidates failed; see provider diagnostics.",
+                    )
+            meta = await asyncio.to_thread(probe, staged)
+            if not meta or abs(meta["duration_seconds"] - expected) > max(
+                5, expected * 0.03
+            ):
+                raise ProviderFailure(
+                    provider,
+                    "invalid_audio",
+                    "Provider delivered invalid or different-duration audio.",
+                )
+            await record(
+                {
+                    "provider": provider,
+                    "code": "acquired",
+                    "message": "Audio validated before Library import.",
+                    "retryable": False,
+                }
+            )
+            async with SessionLocal() as db:
+                await db.execute(
+                    update(FetchQueue)
+                    .where(FetchQueue.id == row.id)
+                    .values(duration_seconds=round(expected))
+                )
+                await db.commit()
+            return expected
+        except Exception as exc:
+            await record(safe_error(provider, exc))
+    message = "No audio provider acquired this recording. " + " ".join(
+        f"{e['provider']}: {e['message']}"
+        for e in errors
+        if e.get("code") != "acquired"
+    )
+    if any(e.get("retryable") for e in errors):
+        raise RuntimeError(message)
+    raise TrackUnavailable(message)

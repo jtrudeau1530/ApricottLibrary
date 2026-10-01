@@ -77,6 +77,7 @@ class FetchQueue(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     warning_message: Mapped[str | None] = mapped_column(Text)
+    provider_errors: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class SongMetadata(Base):
@@ -130,6 +131,9 @@ class DiscoveryStation(Base):
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     sync_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    generation_calls: Mapped[int] = mapped_column(Integer, default=0)
+    generation_message: Mapped[str | None] = mapped_column(Text)
+    schedule_id: Mapped[str | None] = mapped_column(String(64))
     publish_radio: Mapped[bool] = mapped_column(Boolean, default=True)
     radio_station_id: Mapped[str | None] = mapped_column(String(5))
     playlist_id: Mapped[str | None] = mapped_column(ForeignKey("playlist.id", ondelete="SET NULL"))
@@ -158,3 +162,17 @@ class DiscoveryTrack(Base):
     match_source: Mapped[str | None] = mapped_column(String(24))
     import_attempts: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class DiscoverySchedule(Base):
+    __tablename__ = "discovery_schedule"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    query: Mapped[str] = mapped_column(String(500))
+    count: Mapped[int] = mapped_column(Integer, default=20)
+    interval_hours: Mapped[int] = mapped_column(Integer, default=24)
+    max_runs: Mapped[int] = mapped_column(Integer, default=30)
+    runs: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+    last_error: Mapped[str | None] = mapped_column(Text)

@@ -27,7 +27,9 @@ class StationSuggestion(BaseModel):
     tracks: list[SuggestedTrack] = Field(min_length=1, max_length=50)
 
 
-async def generate_station(prompt: str, count: int) -> StationSuggestion:
+async def generate_station(
+    prompt: str, count: int, exclude: list[str] | None = None
+) -> StationSuggestion:
     if not settings.ai_model:
         raise RuntimeError(
             "Configure AI_MODEL and AI_BASE_URL (and AI_API_KEY if the provider requires it)"
@@ -49,7 +51,7 @@ async def generate_station(prompt: str, count: int) -> StationSuggestion:
                     {
                         "role": "system",
                         "content": (
-                            "You curate music stations. Return only a JSON object with name and tracks. "
+                            "You discover music to add to a general-purpose library. Return only a JSON object with name and tracks. "
                             "Each track has title, artist, album, reason. Suggest real, released recordings "
                             "with accurate primary artist and exact title, including version names. "
                             "Do not invent songs, claim availability, include URLs, or repeat recordings. "
@@ -59,7 +61,15 @@ async def generate_station(prompt: str, count: int) -> StationSuggestion:
                             f"Return {count} fitting tracks with variety."
                         ),
                     },
-                    {"role": "user", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": prompt
+                        + (
+                            "\nAlready suggested; do not repeat: " + json.dumps(exclude)
+                            if exclude
+                            else ""
+                        ),
+                    },
                 ],
             },
         )
@@ -71,7 +81,7 @@ async def generate_station(prompt: str, count: int) -> StationSuggestion:
         choice = response.json()["choices"][0]
         if choice.get("finish_reason") == "length":
             raise RuntimeError(
-                "AI reached AI_MAX_COMPLETION_TOKENS; request fewer songs or raise the configured limit. No songs were acquired"
+                "AI reached AI_MAX_COMPLETION_TOKENS; request fewer songs or raise the configured limit. No suggestions from this response were accepted"
             )
         if choice.get("finish_reason") not in (None, "stop"):
             raise ValueError("Incomplete or refused response")
@@ -82,5 +92,5 @@ async def generate_station(prompt: str, count: int) -> StationSuggestion:
         return result
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(
-            "AI returned an incomplete or invalid station; no songs were acquired"
+            "AI returned incomplete or invalid discovery JSON; no suggestions from this response were accepted"
         ) from exc

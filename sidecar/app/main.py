@@ -28,6 +28,7 @@ from .sessions import require_admin, require_session
 from .spotify import spotify
 from .sse_routes import router as sse_router
 from .storage import compute_storage_snapshot
+from .consumer_catalog import router as consumer_catalog_router
 from .station_routes import router as station_router
 from .station_worker import start_station_worker
 
@@ -87,6 +88,7 @@ app.include_router(spotify_playlist_router)
 app.include_router(spotify_paste_router)
 app.include_router(youtube_router)
 app.include_router(station_router)
+app.include_router(consumer_catalog_router)
 
 
 # Authenticated wrappers around the existing Spotify + librespot routers.

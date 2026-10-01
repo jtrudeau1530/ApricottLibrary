@@ -44,7 +44,7 @@ class SpotifyClient:
         if resp.status_code != 200:
             raise HTTPException(
                 status_code=502,
-                detail=f"Spotify token request failed ({resp.status_code}): {resp.text[:200]}",
+                detail=f"Spotify token request failed ({resp.status_code}); check provider authentication",
             )
         payload = resp.json()
         self._token = payload["access_token"]
@@ -62,7 +62,7 @@ class SpotifyClient:
             log.info("User token unavailable (%s); falling back to client credentials.", exc.detail)
             return await self._get_token()
 
-    async def search_tracks(self, query: str, limit: int = 20) -> list[dict]:
+    async def search_tracks(self, query: str, limit: int = 20, offset: int = 0) -> list[dict]:
         token = await self._bearer()
         safe_limit = max(1, min(int(limit), 50))
         resp = await self._client.get(
@@ -72,6 +72,7 @@ class SpotifyClient:
                 "type": "track",
                 "limit": str(safe_limit),
                 "market": "from_token",
+                "offset": max(0,min(int(offset),1000)),
             },
             headers={
                 "Authorization": f"Bearer {token}",
@@ -80,15 +81,14 @@ class SpotifyClient:
         )
         if resp.status_code != 200:
             log.warning(
-                "Spotify search url=%s status=%s body=%s",
-                resp.request.url, resp.status_code, resp.text[:300],
+                "Spotify search status=%s", resp.status_code,
             )
             hint = ""
             if resp.status_code in (401, 403):
                 hint = " (token rejected — reconnect at /api/auth/spotify/login)"
             raise HTTPException(
                 status_code=502,
-                detail=f"Spotify search failed ({resp.status_code}){hint}: {resp.text[:200]}",
+                detail=f"Spotify search failed ({resp.status_code}){hint}",
             )
         items = resp.json().get("tracks", {}).get("items", [])
         return [_to_track(item) for item in items]
@@ -112,11 +112,10 @@ class SpotifyClient:
         )
         return {
             "sent_url": str(resp.request.url),
-            "sent_headers": dict(resp.request.headers),
+            "sent_headers": {k:v for k,v in resp.request.headers.items() if k.lower() != "authorization"},
             "status_code": resp.status_code,
             "response_headers": dict(resp.headers),
             "body": resp.text[:1000],
-            "token_prefix": (token or "")[:12] + "…",
             "client_id_set": bool(settings.spotify_client_id),
             "client_secret_set": bool(settings.spotify_client_secret),
         }

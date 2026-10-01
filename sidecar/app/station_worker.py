@@ -1,11 +1,10 @@
-"""Durable prompt -> matching -> shared queue -> indexed playlist -> Radio station."""
+"""Durable Library discovery -> matching -> acquisition -> verified import."""
 
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import httpx
 from sqlalchemy import select, text
 
 from . import jellyfin
@@ -15,8 +14,6 @@ from .models import (
     DiscoveryStation,
     DiscoveryTrack,
     FetchQueue,
-    Playlist,
-    PlaylistItem,
     SongMetadata,
     User,
 )
@@ -86,15 +83,43 @@ async def plan_station(station: DiscoveryStation):
                 select(DiscoveryTrack).where(DiscoveryTrack.station_id == station.id)
             )
         ).all()
-    if not tracks:
-        suggestion = await generate_station(station.prompt, station.requested_count)
+    while len(tracks) < station.requested_count and not station.schedule_id:
         async with SessionLocal() as db:
             job = await db.get(DiscoveryStation, station.id)
-            job.name = suggestion.name.strip() or "AI station"
-            seen = set()
+            if job.generation_calls >= settings.ai_max_calls_per_job:
+                break
+            job.generation_calls += 1  # Charge the durable budget before network I/O.
+            await db.commit()
+        try:
+            suggestion = await generate_station(
+                station.prompt,
+                min(settings.ai_batch_size, station.requested_count - len(tracks)),
+                [f"{t.artist[:80]} - {t.title[:120]}" for t in tracks],
+            )
+        except Exception as exc:
+            if not tracks:
+                raise
+            async with SessionLocal() as db:
+                job = await db.get(DiscoveryStation, station.id)
+                job.generation_message = (
+                    "Generation/top-up stopped: "
+                    + (
+                        str(exc)
+                        if isinstance(exc, RuntimeError)
+                        else "provider connection failed"
+                    )
+                    + ". Retained suggestions will still be acquired."
+                )
+                await db.commit()
+            break
+        async with SessionLocal() as db:
+            job = await db.get(DiscoveryStation, station.id)
+            if not tracks:
+                job.name = suggestion.name.strip() or "Music discovery"
+            seen = {t.identity_key for t in tracks}
             for song in suggestion.tracks:
                 key = identity_key(song.artist, song.title)
-                if key in seen:
+                if key in seen or len(seen) >= station.requested_count:
                     continue
                 seen.add(key)
                 db.add(
@@ -109,6 +134,30 @@ async def plan_station(station: DiscoveryStation):
                     )
                 )
             await db.commit()
+            tracks = (
+                await db.scalars(
+                    select(DiscoveryTrack)
+                    .where(DiscoveryTrack.station_id == station.id)
+                    .order_by(DiscoveryTrack.position)
+                )
+            ).all()
+    async with SessionLocal() as db:
+        job = await db.get(DiscoveryStation, station.id)
+        if len(tracks) < job.requested_count:
+            reason = (
+                job.generation_message
+                if job.generation_message
+                and job.generation_message.startswith("Generation/top-up stopped:")
+                else (
+                    f"Model did not supply enough unique recordings within the durable {settings.ai_max_calls_per_job}-call budget."
+                    if not job.schedule_id
+                    else "The bounded Spotify search had insufficient new unique recordings."
+                )
+            )
+            job.generation_message = f"Only {len(tracks)} of {job.requested_count} unique suggestions. {reason} Missing suggestions were not acquired."
+        if not tracks:
+            raise RuntimeError(job.generation_message or "Discovery returned no songs")
+        await db.commit()
 
     # A failed catalog request is a failure, never evidence that music is missing.
     catalog = await catalog_snapshot()
@@ -172,15 +221,27 @@ async def plan_station(station: DiscoveryStation):
                 current.status = "importing"
             else:
                 metadata = None
+                metadata_error = None
                 if settings.spotify_client_id and settings.spotify_client_secret:
                     try:
                         results = await spotify.search_tracks(
                             f"{track.artist} {track.title}", limit=10
                         )
-                        metadata = next(
-                            (m for m in results if matches(wanted, m)), None
+                        metadata, _ = choose_match(
+                            wanted,
+                            [
+                                {
+                                    **m,
+                                    "duration_seconds": (m.get("duration_ms") or 0)
+                                    / 1000,
+                                }
+                                for m in results
+                            ],
                         )
-                    except Exception:
+                    except Exception as exc:
+                        from .providers import safe_error
+
+                        metadata_error = safe_error("spotify_metadata", exc)
                         log.info(
                             "Optional Spotify metadata unavailable for station %s",
                             station.id,
@@ -195,6 +256,7 @@ async def plan_station(station: DiscoveryStation):
                         album_name=(metadata or {}).get("album") or track.album,
                         spotify_track_id=(metadata or {}).get("id"),
                         cover_url=(metadata or {}).get("cover_url"),
+                        provider_errors=[metadata_error] if metadata_error else [],
                         duration_seconds=round(metadata["duration_ms"] / 1000)
                         if metadata and metadata.get("duration_ms")
                         else None,
@@ -313,38 +375,11 @@ async def follow_acquisition(station: DiscoveryStation):
                 if t.status in ("existing", "imported") and t.jellyfin_item_id
             ]
             if playable:
-                if not job.playlist_id:
-                    playlist = Playlist(name=job.name, owner_id=job.owner_id)
-                    db.add(playlist)
-                    await db.flush()
-                    job.playlist_id = playlist.id
-                refs = set(
-                    (
-                        await db.scalars(
-                            select(PlaylistItem.jellyfin_item_id).where(
-                                PlaylistItem.playlist_id == job.playlist_id
-                            )
-                        )
-                    ).all()
-                )
-                for t in playable:
-                    if t.jellyfin_item_id not in refs:
-                        db.add(
-                            PlaylistItem(
-                                playlist_id=job.playlist_id,
-                                jellyfin_item_id=t.jellyfin_item_id,
-                                position=t.position,
-                            )
-                        )
-                        refs.add(t.jellyfin_item_id)
+                # Library manages music only. Existing legacy playlists are preserved.
                 job.status = (
-                    "syncing"
-                    if job.publish_radio
-                    else (
-                        "ready" if len(playable) == job.requested_count else "partial"
-                    )
+                    "ready" if len(playable) == job.requested_count else "partial"
                 )
-                job.next_attempt_at = now()
+                job.next_attempt_at = None
             else:
                 job.status = "failed"
                 job.error_message = (
@@ -355,62 +390,6 @@ async def follow_acquisition(station: DiscoveryStation):
         await publish("catalog:updated", {"station_id": station.id})
     if pending:
         await jellyfin.trigger_refresh(strict=True)
-
-
-async def sync_radio(station: DiscoveryStation):
-    if not settings.radio_internal_url or not settings.radio_library_token:
-        raise RuntimeError(
-            "Radio integration requires RADIO_INTERNAL_URL and matching RADIO_LIBRARY_TOKEN in Library and Radio"
-        )
-    async with SessionLocal() as db:
-        owner = await db.get(User, station.owner_id)
-        tracks = (
-            await db.scalars(
-                select(DiscoveryTrack)
-                .where(DiscoveryTrack.station_id == station.id)
-                .order_by(DiscoveryTrack.position)
-            )
-        ).all()
-    playable = [t for t in tracks if t.status in ("existing", "imported")]
-    if not owner or owner.disabled or not owner.can_fetch:
-        raise RuntimeError(
-            "Station owner is no longer allowed to acquire or publish music"
-        )
-    if any(not t.relative_path for t in playable):
-        raise RuntimeError(
-            "Jellyfin tracks are outside Library's shared media volume; Radio cannot resolve them"
-        )
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            settings.radio_internal_url.rstrip("/") + "/api/library/stations/sync",
-            headers={"Authorization": f"Bearer {settings.radio_library_token}"},
-            json={
-                "job_id": station.id,
-                "name": station.name,
-                "owner_username": owner.username,
-                "relative_paths": list(
-                    dict.fromkeys(t.relative_path for t in playable)
-                ),
-            },
-        )
-    if response.status_code != 200:
-        detail = ""
-        try:
-            detail = str(response.json().get("detail", ""))[:300]
-        except ValueError:
-            pass
-        raise RuntimeError(f"Radio sync failed (HTTP {response.status_code}): {detail}")
-    body = response.json()
-    if body.get("imported") != len(
-        set(t.relative_path for t in playable)
-    ) or not body.get("station_id"):
-        raise RuntimeError("Radio did not confirm all requested playable tracks")
-    async with SessionLocal() as db:
-        job = await db.get(DiscoveryStation, station.id)
-        job.radio_station_id = body["station_id"]
-        job.status = "ready" if len(playable) == job.requested_count else "partial"
-        job.error_message = None
-        await db.commit()
 
 
 async def tick():
@@ -436,16 +415,14 @@ async def tick():
         if station.status in ("queued", "planning"):
             station.status = "planning"
             station.attempts += 1
-        elif station.status == "syncing":
-            station.sync_attempts += 1
+        elif station.status in ("syncing", "sync_failed"):
+            station.status = "acquiring"
         await db.commit()
     try:
         if station.status == "planning":
             await plan_station(station)
         elif station.status == "acquiring":
             await follow_acquisition(station)
-        elif station.status == "syncing":
-            await sync_radio(station)
         async with SessionLocal() as db:
             job = await db.get(DiscoveryStation, station.id)
             if job and job.status not in ("failed", "sync_failed"):
@@ -459,16 +436,11 @@ async def tick():
             if not job:
                 return
             job.error_message = str(exc) or type(exc).__name__
-            if job.status == "syncing":
-                if job.sync_attempts >= settings.acquisition_max_attempts:
-                    job.status = "sync_failed"
-                delay = 15 * 2 ** max(0, job.sync_attempts - 1)
-            else:
-                if job.status == "acquiring":
-                    job.attempts += 1
-                if job.attempts >= settings.acquisition_max_attempts:
-                    job.status = "failed"
-                delay = 15 * 2 ** max(0, job.attempts - 1)
+            if job.status == "acquiring":
+                job.attempts += 1
+            if job.attempts >= settings.acquisition_max_attempts:
+                job.status = "failed"
+            delay = 15 * 2 ** max(0, job.attempts - 1)
             job.next_attempt_at = now() + timedelta(seconds=delay)
             await db.commit()
 
@@ -485,6 +457,9 @@ async def start_station_worker():
                 await connection.commit()
                 if locked:
                     try:
+                        from .discovery_schedule import schedule_tick
+
+                        await schedule_tick()
                         await tick()
                     finally:
                         await connection.execute(

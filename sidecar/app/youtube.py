@@ -61,8 +61,8 @@ def _yt_dlp_common_opts() -> dict:
 _NOISE_PATTERNS = [
     r"\(Official\s*(Music\s*)?Video\)",
     r"\[Official\s*(Music\s*)?Video\]",
-    r"\(Official\s*Audio\)",
-    r"\[Official\s*Audio\]",
+    r"\(Official\s*Audio(?:\s*(?:HD|HQ))?\)",
+    r"\[Official\s*Audio(?:\s*(?:HD|HQ))?\]",
     r"\(Official\s*Lyric\s*Video\)",
     r"\[Official\s*Lyric\s*Video\]",
     r"\(Lyrics?\)",
@@ -235,7 +235,7 @@ async def _public_command(args: list[str], timeout: int) -> str:
         start_new_session=True,
     )
     try:
-        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
     except BaseException as exc:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -247,7 +247,13 @@ async def _public_command(args: list[str], timeout: int) -> str:
         raise
     if proc.returncode:
         # Upstream stderr may contain signed URLs; do not persist it in UI/errors.
-        raise RuntimeError(f"Public audio provider unavailable or restricted (exit {proc.returncode})")
+        from .providers import ProviderFailure
+        text = stderr.decode("utf-8", errors="replace").lower()
+        if "not a bot" in text or "confirm you" in text:
+            raise ProviderFailure("youtube", "bot_challenge", "YouTube requires a bot/access challenge on this host; no bypass attempted. Use another audio provider.")
+        if any(x in text for x in ("private video", "sign in", "not available", "age-restricted", "drm")):
+            raise ProviderFailure("youtube", "restricted", "YouTube recording is restricted/unavailable; no access-control or DRM bypass attempted.")
+        raise ProviderFailure("youtube", "extractor_failed", "Public YouTube extraction failed; check extractor/tools and provider connectivity.", True)
     return stdout.decode("utf-8", errors="replace")
 
 
@@ -257,7 +263,7 @@ async def search_public_audio(artist: str, title: str) -> list[dict]:
 
     raw = await _public_command([
         "--flat-playlist", "--dump-single-json", "--skip-download",
-        f"ytsearch5:{artist} {title} official audio",
+        f"ytsearch10:{artist} {title} audio",
     ], 60)
     entries = json.loads(raw).get("entries") or []
     candidates = []
@@ -273,7 +279,8 @@ async def search_public_audio(artist: str, title: str) -> list[dict]:
         candidates.append({
             "source_id": entry["id"], "title": parsed_title, "artist": parsed_artist,
             "duration_seconds": entry.get("duration"), "cover_url": _best_thumbnail(entry),
-            "preferred": normalize(channel).endswith("topic") or "official audio" in (entry.get("title") or "").lower(),
+            "preferred": normalize(channel).endswith("topic") or "official audio" in (entry.get("title") or "").lower()
+            or normalize(channel) in {normalize(artist), normalize(artist+"VEVO")},
         })
     return candidates
 

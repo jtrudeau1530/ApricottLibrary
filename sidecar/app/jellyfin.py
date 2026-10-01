@@ -55,6 +55,7 @@ def _normalize_track(item: dict) -> dict[str, Any]:
         "path": item.get("Path"),
         "artists": artists,
         "provider_ids": item.get("ProviderIds") or {},
+        "genre": "; ".join(item.get("Genres") or []),
     }
 
 
@@ -71,7 +72,7 @@ async def list_tracks(
     params: dict[str, Any] = {
         "IncludeItemTypes": "Audio",
         "Recursive": "true",
-        "Fields": "Artists,AlbumArtists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags,Path,ProviderIds",
+        "Fields": "Artists,AlbumArtists,Album,AlbumId,RunTimeTicks,DateCreated,ImageTags,Path,ProviderIds,Genres",
         "SortBy": sort_by,
         "SortOrder": "Descending" if descending else "Ascending",
         "Limit": limit,

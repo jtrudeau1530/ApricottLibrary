@@ -38,18 +38,26 @@ class Settings(BaseSettings):
     # PO Tokens for YouTube's SABR streaming path.
     bgutil_pot_url: str = "http://bgutil-pot:4416"
 
+    library_catalog_token: str = ""
+
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: str = ""
     ai_model: str = ""
     ai_max_completion_tokens: int = Field(default=2048, ge=256, le=8192)
+    ai_max_calls_per_job: int = Field(default=3, ge=1, le=5)
+    ai_batch_size: int = Field(default=20, ge=5, le=20)
     ai_timeout_seconds: int = Field(default=90, ge=10, le=180)
     acquisition_concurrency: int = Field(default=2, ge=1, le=4)
     acquisition_max_attempts: int = Field(default=3, ge=1, le=5)
     acquisition_timeout_seconds: int = Field(default=300, ge=30, le=900)
     station_import_attempts: int = Field(default=20, ge=1, le=60)
-    radio_internal_url: str = ""
-    radio_library_token: str = ""
-    radio_public_url: str = ""
+    slskd_internal_url: str = "http://slskd:5030"
+    slskd_username: str = "admin"
+    slskd_password: str = ""
+    slskd_api_key: str = ""
+    slskd_complete_path: str = "/downloads/complete"
+    discovery_min_interval_hours: int = Field(default=24, ge=6, le=168)
+    discovery_max_schedule_runs: int = Field(default=30, ge=1, le=365)
 
 
 settings = Settings()

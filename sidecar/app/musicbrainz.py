@@ -6,6 +6,7 @@ and a real cover image. MusicBrainz is free, no auth, no app-level rate
 limit beyond ~1 req/sec for anonymous clients (must send a real User-Agent
 per their etiquette policy).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,9 @@ _last_call_at: float = 0.0
 _call_lock = asyncio.Lock()
 
 
-async def _throttled_get(client: httpx.AsyncClient, url: str, params: dict | None = None) -> httpx.Response:
+async def _throttled_get(
+    client: httpx.AsyncClient, url: str, params: dict | None = None
+) -> httpx.Response:
     """Enforce the 1 req/sec etiquette globally across the whole sidecar."""
     global _last_call_at
     async with _call_lock:
@@ -86,7 +89,9 @@ async def enrich(artist: str, title: str) -> dict | None:
         if resp.status_code != 200:
             log.warning(
                 "MusicBrainz search %s -> %s body=%s",
-                urlencode(params), resp.status_code, resp.text[:200],
+                urlencode(params),
+                resp.status_code,
+                resp.text[:200],
             )
             return None
 
@@ -94,16 +99,38 @@ async def enrich(artist: str, title: str) -> dict | None:
         recordings = body.get("recordings") or []
         if not recordings:
             return None
-        best = recordings[0]
+        from .track_matching import normalize
+
+        best = next(
+            (
+                r
+                for r in recordings
+                if normalize(r.get("title") or "") == normalize(title)
+                and normalize(artist)
+                in {
+                    normalize(
+                        c.get("name") or (c.get("artist") or {}).get("name") or ""
+                    )
+                    for c in r.get("artist-credit", [])
+                    if isinstance(c, dict)
+                }
+            ),
+            None,
+        )
+        if not best:
+            return None
 
         out: dict = {}
         # Artist
         artist_credit = best.get("artist-credit") or []
         if artist_credit:
-            out["artist"] = "".join(
-                ac.get("name") or ac.get("artist", {}).get("name") or ""
-                for ac in artist_credit
-            ).strip() or None
+            out["artist"] = (
+                "".join(
+                    ac.get("name") or ac.get("artist", {}).get("name") or ""
+                    for ac in artist_credit
+                ).strip()
+                or None
+            )
             first_artist = artist_credit[0].get("artist") or {}
             out["artist_mbid"] = first_artist.get("id")
 

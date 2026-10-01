@@ -4,123 +4,119 @@ The library backend for the Apricot Suite — music storage, metadata, and downl
 
 Companion to [Apricot Radio](https://github.com/jtrudeau1530/ApricottRadio). Radio streams; Library stores.
 
-## AI station maker
+## Library-owned music discovery and acquisition
 
-Open **AI stations** from Library's home page (`/stations`), describe a vibe,
-choose 5–50 songs, and press **Make station**. A persistent background job
-generates suggestions, checks the complete Jellyfin catalog (including Library
-metadata overrides) and the shared Library media files, then automatically
-queues missing recordings. No per-song approval is needed. Jobs continue when
-the page closes and resume after sidecar restarts.
+Open **Discover music** (`/discover`) to describe music to add to Library.
+This creates an acquisition job, not a Radio station or an automatic playlist.
+Library serves all music consumers. `/stations` redirects to discovery; legacy
+jobs, playlists and downloaded media remain in place. The existing database
+names `discovery_station`/`DiscoveryStation` are retained for compatibility.
+Legacy pending Radio publication becomes Library acquisition only; Library no
+longer calls Radio or needs its URL/token to discover or acquire music.
 
-Matching normalizes Unicode and punctuation while retaining recording-version
-words such as live, remix and acoustic. Different-length recordings with the
-same tags are reported as ambiguous rather than silently substituted. The
-queue shares a canonical recording identity across AI stations, Spotify imports
-and YouTube imports, using PostgreSQL locks and a unique constraint to prevent
-new concurrent duplicate jobs. Existing queue history is reused; this migration
-does not delete old duplicate files or queue rows.
+AI uses the existing inexpensive, non-reasoning `gpt-4o-mini` configuration and
+Chat Completions JSON mode. It generates at most 20 suggestions per call and
+up to three calls per job, including top-ups. Each call has a 2,048-output-token
+cap. The call budget is persisted **before** requesting the provider, so restarts
+and retries cannot spend it again. Deduplication runs between batches. A
+50-song request may still fall short if the model returns duplicates, refuses,
+truncates or invents unavailable recordings; the job reports its unique count
+and why bounded generation stopped. A suggestion is never an acquired song.
 
-Automatic acquisition reuses yt-dlp for public YouTube audio, accepts matching
-Topic/official-audio results, validates the produced OGG and duration, writes
-tags and artwork, and atomically imports the file without overwriting existing
-audio. Spotify discovery is optional metadata enrichment; the station workflow
-does not initiate Spotify/librespot downloads. Existing manually requested queue
-work can be reused. The new public-source path does not use cookies, token
-plugins, geographic bypass, DRM formats or access-control bypass. If a source is
-restricted or no confident recording is found, that track fails visibly.
+The job checks the complete Jellyfin catalog and Library files before acquisition.
+Canonical artist/title identities share PostgreSQL locks with manual imports.
+Unicode/punctuation differences are normalized, while live/remix/acoustic and
+featured-artist distinctions are retained. Known duration is checked; ambiguous
+recordings are rejected. Spotify's existing OAuth/client configuration supplies
+IDs, album, artwork and duration. It is discovery/metadata access, not a full-track
+export API. The existing librespot session file is reported separately; the new
+workflow does not decrypt Spotify streams or import previews as complete tracks.
 
-The UI distinguishes existing music, acquisition, files awaiting Jellyfin
-indexing, verified imports, failures, and Radio sync. A playlist contains only
-tracks confirmed by Jellyfin. A downloaded file that is not indexed within the
-limit remains on disk and is reported as an import failure, never as a completed
-station track. Artwork problems are reported separately from audio failures.
-**Retry failed work** retries the station as a batch; **Retry Radio sync** leaves
-the downloaded music and playlist intact.
+Automatic acquisition tries the existing **slskd/Soulseek** service first, then
+unrestricted public **YouTube** audio. Soulseek searches are capped at 100 files /
+20 peer responses and two transfer attempts, with duration/file/tag validation.
+YouTube checks up to ten candidates and tries at most two confident matches.
+Recognized presentation decorations such as `Official Audio HD` are stripped;
+recording-version distinctions remain. Artist-channel/Topic/official-audio
+results also need matching artist/title and known duration. There is no cookie,
+challenge-token, geographic, DRM or access-control bypass in this path.
 
-Configure the Library sidecar environment (also passed through Compose):
+Acquisition has a configurable overall provider timeout (default 300 seconds),
+concurrency 2 (maximum 4), and at most three automatic queue attempts. Per-provider
+codes/messages are persisted and shown even if a later fallback succeeds.
+Readiness distinguishes configured tools from usable account/source access.
+A bot challenge, authentication failure, offline Soulseek account, no confident
+match and a missing shared download directory have different actionable errors.
+Validated audio is tagged and atomically imported without overwriting media.
+Existing MusicBrainz enrichment adds recording-matched genres/year/IDs and cover
+art where available; Spotify artwork is reused. Jellyfin refresh/indexing must
+confirm the recording before the UI reports a verified import. Art failures
+remain warnings, separate from audio/import failures.
 
-| Variable | Purpose / default |
+### Finite recurring Spotify discovery
+
+The discovery page can save one campaign per user with a Spotify search query
+(e.g. `genre:country year:2026`), song count, interval, maximum runs and enable flag.
+Campaigns are disabled until explicitly enabled. Defaults are 20 songs every
+24 hours for 30 runs. The deployment can set the minimum interval (6–168 hours;
+default 24) and maximum campaign runs (1–365; default 30); each campaign is still
+finite and returns at most 50 new suggestions per run. Each run reads at most
+50 Spotify search results in five calls, excludes already present and previously
+suggested recordings, and reports insufficient results. This searches for music
+new to Library; it does not promise Spotify's unavailable recommendation APIs or
+that each search result was newly released. No AI calls are made by the Spotify
+campaign. Saving a campaign explicitly starts a new run budget. Stopping it
+prevents future runs; already queued acquisition jobs continue.
+
+The schedule and spent runs survive restarts. Next-run time is advanced before
+provider I/O; missed intervals are not replayed. A user may have three active
+acquisition jobs. A full queue skips that interval (counting it against the finite run budget), and provider failures remain
+visible on the campaign rather than starting a retry storm.
+
+### Backend runtime settings
+
+| Setting | Default / purpose |
 |---|---|
-| `AI_BASE_URL` | OpenAI-compatible API root, default `https://api.openai.com/v1` |
-| `AI_MODEL` | Required provider model name; no model is silently selected |
-| `AI_API_KEY` | Provider key if required; may be empty for a local provider |
-| `AI_MAX_COMPLETION_TOKENS` | Hard output token budget, default 2048; configurable from 256 to 8192 |
-| `AI_TIMEOUT_SECONDS` | Generation timeout, default 90 |
-| `ACQUISITION_CONCURRENCY` | Queue workers per sidecar process, default 2, maximum 4 |
-| `ACQUISITION_MAX_ATTEMPTS` | Automatic download and job/sync retry limit, default 3 |
-| `ACQUISITION_TIMEOUT_SECONDS` | Public download subprocess timeout, default 300 |
-| `STATION_IMPORT_ATTEMPTS` | Jellyfin indexing polls per recording, default 20 at 15-second intervals |
-| `RADIO_INTERNAL_URL` | Reachable Radio sidecar origin, without `/api` |
-| `RADIO_LIBRARY_TOKEN` | Dedicated integration secret, identical on Library and Radio |
-| `RADIO_PUBLIC_URL` | Optional Radio frontend origin for station links |
+| `AI_MODEL`, `AI_BASE_URL`, `AI_API_KEY` | Keep model `gpt-4o-mini`, OpenAI API root, securely supplied backend key |
+| `AI_MAX_COMPLETION_TOKENS` | 2048 per call; configurable 256–8192 |
+| `AI_MAX_CALLS_PER_JOB`, `AI_BATCH_SIZE` | 3 calls (1–5), 20 suggestions (5–20) |
+| `AI_TIMEOUT_SECONDS` | 90 by default; prepared local configuration uses 45 |
+| `ACQUISITION_CONCURRENCY`, `ACQUISITION_MAX_ATTEMPTS` | 2 workers / 3 bounded automatic attempts |
+| `ACQUISITION_TIMEOUT_SECONDS` | 300-second overall provider budget |
+| `STATION_IMPORT_ATTEMPTS` | Legacy variable name: 20 Jellyfin indexing polls at 15 seconds |
+| `SLSKD_INTERNAL_URL`, `SLSKD_USERNAME`, `SLSKD_PASSWORD` | Existing slskd origin/login; Compose reuses the configured backend credentials |
+| `SLSKD_API_KEY` | Optional alternative to slskd login |
+| `SLSKD_COMPLETE_PATH` | `/downloads/complete`, matching slskd's shared completed-download directory |
+| `DISCOVERY_MIN_INTERVAL_HOURS`, `DISCOVERY_MAX_SCHEDULE_RUNS` | 24 hours / 30 runs |
+| `LIBRARY_CATALOG_TOKEN` | Optional read-only service credential for any music consumer; never needed for discovery |
 
-The AI endpoint must accept Chat Completions with JSON object mode. Responses
-are validated locally; see the [official JSON-mode documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
-Generation, network errors and Radio sync use bounded retries with backoff;
-public downloads also have process-group cancellation so ffmpeg does not keep
-running after timeout or shutdown. Each user may have three active station jobs.
+The optional `/api/consumer/catalog` read contract returns only indexed, validated,
+mounted audio with relative paths and metadata. It accepts a dedicated backend
+Bearer token and bounded pagination. Radio can consume it; Library does not need
+Radio to operate. Local backend `.env` files remain ignored and owner-only, and
+are not uploaded to Coolify automatically. Keys/tokens must stay in backend
+runtime configuration, never frontend build arguments or source.
 
-For Radio station creation, configure `RADIO_LIBRARY_TOKEN` on Radio's
-`radio-engine` service and use a reachable `RADIO_INTERNAL_URL` in Library. Both
-services must mount the same media directory, writable in Library and readable
-in Radio. The new `/api/library/stations/sync` endpoint validates and incrementally
-indexes only the requested files using Radio's existing catalog helpers, then
-adds them to an idempotent station associated with the Library job. Retries
-preserve Radio operator edits and the station queue. Library and Radio currently
-use different user/session tables: the authenticated Library owner's username
-must match a Radio account with `station_manager` or `admin` role, and Radio's
-station cap still applies. Jellyfin audio outside Library's shared media mount
-can enter a Library playlist but cannot be synchronized to Radio through this
-integration; the job reports that failure explicitly.
+### Observed failure and verification limits
 
-Without Radio configuration, the UI offers Library playlists. Radio integration
-is disabled by default and uses its own service token, not the Radio bootstrap
-admin token or forwarded session cookies. Keep API keys and integration secrets
-in local/deployment environment settings.
+Production inspection confirmed one 50-request job saved 42 unique suggestions:
+31 failed confident matching and 11 failed public extraction; all 42 used the
+single YouTube path. Spotify supplied IDs for 24. The old generation logic
+accepted an undersized unique result without topping up; raw responses were not
+persisted, so the original model count versus duplicate count cannot be recovered.
+A read-only YouTube search exposed the unhandled `Official Audio HD` decoration;
+a separate metadata probe hit the host's bot challenge. Existing slskd authentication
+and Soulseek connection/login succeeded but discovery never used that service.
+Production slskd uses `/app/downloads` and `/app/incomplete`, outside the shared
+`/downloads` mount. Readiness now detects this mismatch before requesting a
+transfer. The completed path must be configured into the shared downloads mount;
+the corrected Compose now sets completed/incomplete directories explicitly.
 
-### Prepared configuration (2026-10-01)
-
-Library's ignored, owner-only `.env` selects `AI_MODEL=gpt-4o-mini`,
-`AI_BASE_URL=https://api.openai.com/v1`, `AI_MAX_COMPLETION_TOKENS=2048`, and
-`AI_TIMEOUT_SECONDS=45`. This older, non-reasoning model supports Chat
-Completions and JSON object mode; no reasoning parameters are sent. Current
-standard pricing is $0.15 per million input tokens and $0.60 per million output
-tokens ([official model reference](https://developers.openai.com/api/docs/models/gpt-4o-mini)).
-Its availability was confirmed using the configured account's read-only model
-endpoint. No paid station generation was performed. Compact responses keep
-reasons short; if a large station exceeds the budget, generation fails visibly
-before acquisition. Request fewer songs or increase the environment limit.
-
-`RADIO_INTERNAL_URL=http://radio-engine:8000` uses the actual Radio service alias
-on the shared `coolify` Docker network. A request from the running Library
-sidecar to its `/api/health` returned HTTP 200. Both live services already mount
-the same host media directory; Radio reads it at `/library_media` and Library
-writes it at `/media`. `RADIO_PUBLIC_URL=https://radio.zektek.us` supplies station
-links. No new network or public port is needed in this Coolify environment.
-
-The OpenAI key was reused from KTalk's existing backend credential without
-changing KTalk. Library and Radio's ignored `.env` files have mode `0600` and
-contain the same dedicated `RADIO_LIBRARY_TOKEN`; the OpenAI key is present only
-in Library's file. These settings feed backend services through Compose; they
-are not frontend build arguments. Preserve these files outside version control.
-Coolify manages deployment variables separately: securely transfer Library's
-AI and Radio settings to Library's runtime environment, and only the matching
-`RADIO_LIBRARY_TOKEN` to Radio's runtime environment before an authorized
-rollout. Keep both services attached to the existing shared `coolify` network.
-Local `.env` files are not automatically uploaded to Coolify.
-
-Configuration is prepared locally, not applied to the running containers.
-Neither service was rebuilt, restarted or deployed. The new authenticated sync
-endpoint, migrations, station generation, acquisition and playback still need
-verification after an authorized rollout; the existing health endpoint alone
-does not verify the new workflow.
-
-Library migration `0003_discovery_stations` and Radio migration
-`0012_library_station_jobs` run through the existing startup migration hooks.
-The feature is implemented in source; no live providers, database migrations,
-download/import cycle or Radio playback have been exercised as part of this
-change. Tests were intentionally not run.
+Correction migrations are additive (`0004_library_discovery` and Radio's
+`0013_library_refresh`); no jobs/media are dropped. This correction has not been
+committed, pushed, deployed or exercised through actual acquisition/import or
+scheduled refresh. Syntax, app imports/OpenAPI, frontend type checks and secret
+scans are static checks; no tests or production migrations were run.
 
 ## What it is
 

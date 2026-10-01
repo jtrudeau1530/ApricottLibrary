@@ -83,6 +83,7 @@ def probe(path: Path) -> dict | None:
             "title": first("title"),
             "artist": first("artist"),
             "album": first("album"),
+            "genres": list(tags.get("genre") or []),
             "duration_seconds": audio.info.length,
             "path": str(path),
         }

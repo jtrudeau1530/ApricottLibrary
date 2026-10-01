@@ -121,14 +121,8 @@ async def _heartbeat(item_id: str, progress: int) -> None:
 
 
 async def _trigger_jellyfin_refresh() -> None:
-    """Async refresh — fire-and-forget; we don't block on Jellyfin scan completion."""
-    url = f"{settings.jellyfin_internal_url.rstrip('/')}/Library/Refresh"
-    headers = {"X-Emby-Token": settings.jellyfin_api_key}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(url, headers=headers)
-    except Exception as exc:  # pragma: no cover
-        log.warning("Jellyfin refresh failed: %s", exc)
+    """Reuse the shared idle-scan guard across downloads and discovery jobs."""
+    await jellyfin.trigger_refresh()
 
 
 async def _emit_storage_update() -> None:

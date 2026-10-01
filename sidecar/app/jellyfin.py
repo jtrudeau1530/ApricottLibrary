@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -7,6 +9,8 @@ import httpx
 from .config import settings
 
 log = logging.getLogger("jellyfin")
+_refresh_lock = asyncio.Lock()
+_last_refresh_check = 0.0
 
 _SORT_MAP = {
     "title": "SortName",
@@ -323,15 +327,33 @@ async def get_song_view(item_id: str) -> dict[str, Any] | None:
 
 
 async def trigger_refresh(strict: bool = False) -> None:
-    """Best-effort full-library refresh after a download."""
-    url = f"{_base_url()}/Library/Refresh"
+    """Request an idle scan, without cancelling a running scan for each import."""
+    global _last_refresh_check
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, headers=_headers())
-            resp.raise_for_status()
+        async with _refresh_lock:
+            if time.monotonic() - _last_refresh_check < 30:
+                return
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                tasks = await client.get(
+                    f"{_base_url()}/ScheduledTasks", headers=_headers()
+                )
+                tasks.raise_for_status()
+                active = any(
+                    task.get("Key") == "RefreshLibrary"
+                    and task.get("State") in ("Running", "Cancelling")
+                    for task in tasks.json()
+                )
+                if not active:
+                    resp = await client.post(
+                        f"{_base_url()}/Library/Refresh", headers=_headers()
+                    )
+                    resp.raise_for_status()
+                _last_refresh_check = time.monotonic()
     except Exception as exc:  # pragma: no cover
         if strict:
-            raise RuntimeError("Jellyfin refresh failed; downloaded files are waiting for indexing") from exc
+            raise RuntimeError(
+                "Jellyfin refresh failed; downloaded files are waiting for indexing"
+            ) from exc
         log.warning("Jellyfin refresh failed: %s", exc)
 
 
